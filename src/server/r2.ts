@@ -66,6 +66,69 @@ export async function r2Head(
   };
 }
 
+/** Server-side GET returning the object body as text (for vCard validation). */
+export async function r2GetText(
+  cfg: R2Config,
+  bucket: string,
+  key: string,
+): Promise<string | null> {
+  const res = await client(cfg).fetch(objectUrl(cfg, bucket, key), {
+    method: "GET",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`R2 GET failed: ${res.status}`);
+  return res.text();
+}
+
+/** Server-side PUT with optional response headers stored on the object. */
+export async function r2Put(
+  cfg: R2Config,
+  bucket: string,
+  key: string,
+  body: string | ArrayBuffer,
+  headers: Record<string, string> = {},
+): Promise<void> {
+  const res = await client(cfg).fetch(objectUrl(cfg, bucket, key), {
+    method: "PUT",
+    body,
+    headers,
+  });
+  if (!res.ok) throw new Error(`R2 PUT failed: ${res.status}`);
+}
+
+/** Server-side copy (S3 CopyObject) — no bytes pass through the Worker. */
+export async function r2Copy(
+  cfg: R2Config,
+  bucket: string,
+  destKey: string,
+  srcBucket: string,
+  srcKey: string,
+): Promise<void> {
+  const encodedSrc = srcKey
+    .split("/")
+    .map((s) => encodeURIComponent(s))
+    .join("/");
+  const res = await client(cfg).fetch(objectUrl(cfg, bucket, destKey), {
+    method: "PUT",
+    headers: { "x-amz-copy-source": `/${srcBucket}/${encodedSrc}` },
+  });
+  if (!res.ok) throw new Error(`R2 COPY failed: ${res.status}`);
+}
+
+/** Server-side DELETE. Succeeds even if the object is already gone. */
+export async function r2Delete(
+  cfg: R2Config,
+  bucket: string,
+  key: string,
+): Promise<void> {
+  const res = await client(cfg).fetch(objectUrl(cfg, bucket, key), {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`R2 DELETE failed: ${res.status}`);
+  }
+}
+
 /** Presigned GET URL for a private file, short-lived (AC-12). */
 export async function presignGet(
   cfg: R2Config,
