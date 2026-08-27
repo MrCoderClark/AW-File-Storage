@@ -20,3 +20,6 @@ NEXT_PUBLIC_APP_NAME="AW File Storage"
 # PUBLIC_FILE_DOMAIN="contacts.americaworks.com"
 # CF_API_TOKEN=""
 # CF_ZONE_ID=""
+
+# --- Phase 3c, scheduled cleanup (spec 0003) ---
+# CRON_SECRET=""               # shared secret; the companion cron worker sends it as a bearer token

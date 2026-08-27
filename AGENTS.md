@@ -2,7 +2,7 @@
 
 AI context for the **AW File Storage** project. Read this before writing code. It records the stack, the commands, and the non negotiable conventions. The full reasoning lives in [docs/specs/0001-secure-file-storage-platform/](docs/specs/0001-secure-file-storage-platform/index.md); this file is the short version a build needs.
 
-Status: **Phase 0–1 done, Phase 2 (auth) in progress.** Built: scaffold, the tenancy schema + org-isolation wrapper (spec 0002), and Better Auth wiring with a verified sign-in (spec 0001). Remaining in Phase 2: per-account lockout, Resend email, invitations, 2FA enrolment. Then uploads (0003) and the Upload Center UI (0004).
+Status: **Phases 0–3 done (backend); Phase 4 (UI) next.** Built: scaffold; tenancy schema + org isolation (0002); Better Auth with sessions, org scoping, CSRF, lockout, breach check, email, invitations, 2FA (0001); and the full upload/publish pipeline (0003) — presigned direct-to-R2 upload, vCard validation + publish to the public bucket, unpublish/delete, private download links, listing, and the scheduled cleanup. All verified against real R2/D1 via API. **Remaining:** Phase 4 — the Upload Center UI (0004), which wires these `/api/*` routes to the screen in the mock. Deferred: multipart uploads >90 MB; the sign-in page's 2FA code-entry step; password-reset/accept-invitation pages.
 
 ## What this is
 
