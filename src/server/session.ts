@@ -33,6 +33,29 @@ export async function requireSession() {
   return session;
 }
 
+/**
+ * Resolve the acting caller for file operations: their org, user id, and whether
+ * their role (owner/admin) lets them manage any file vs only their own. Returns
+ * null when there is no usable session/org.
+ */
+export async function getActor(): Promise<
+  { orgId: string; userId: string; canManageAny: boolean } | null
+> {
+  const session = await getSession();
+  if (!session) return null;
+  const orgId = (session.session as { activeOrganizationId?: string | null })
+    .activeOrganizationId;
+  if (!orgId) return null;
+  const auth = getAuth();
+  const member = await auth.api.getActiveMember({ headers: await headers() });
+  const role = member?.role;
+  return {
+    orgId,
+    userId: session.user.id,
+    canManageAny: role === "owner" || role === "admin",
+  };
+}
+
 export type Role = "owner" | "admin" | "member";
 
 const RANK: Record<Role, number> = { member: 1, admin: 2, owner: 3 };
