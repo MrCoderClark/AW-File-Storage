@@ -22,16 +22,20 @@
 			"migrations_dir": "migrations"
 		}
 	],
+	// R2 is accessed via the S3 API (aws4fetch) in both the browser (presigned)
+	// and the Worker, so bytes always hit the same real bucket without needing
+	// remote bindings (which require a workers.dev subdomain). These local
+	// bindings are kept for potential future binding-based use.
+	"r2_buckets": [
+		{ "binding": "FILES_PRIVATE", "bucket_name": "aw-files-private" },
+		{ "binding": "FILES_PUBLIC", "bucket_name": "aw-files-public" }
+	],
 	// ---------------------------------------------------------------------------
 	// Bindings below are added as each phase needs them. Create the resources in
 	// your Cloudflare account first (see the commands the assistant provides),
 	// then uncomment and fill in the ids. Keep production values out of git for
 	// anything sensitive; ids here are safe, secrets go through `wrangler secret`.
 	// ---------------------------------------------------------------------------
-	// "r2_buckets": [
-	//   { "binding": "FILES_PRIVATE", "bucket_name": "aw-files-private" },
-	//   { "binding": "FILES_PUBLIC",  "bucket_name": "aw-files-public"  }
-	// ],
 	// "queues": {
 	//   "producers": [{ "binding": "UPLOAD_QUEUE", "queue": "aw-upload-processing" }],
 	//   "consumers": [{ "queue": "aw-upload-processing" }]

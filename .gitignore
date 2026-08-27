@@ -19,6 +19,7 @@ wrangler.local.jsonc
 
 # generated cloudflare types
 /cloudflare-env.d.ts
+/worker-configuration.d.ts
 
 # testing
 /coverage
