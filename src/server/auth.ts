@@ -1,3 +1,4 @@
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { buildDb } from "./db";
@@ -23,12 +24,18 @@ export function buildAuth(env: AuthEnv) {
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.APP_URL,
     trustedOrigins: [env.APP_URL], // the ONLY trusted origin; no wildcards
-    rateLimit: {
-      enabled: true,
-      storage: "database", // memory storage does NOT survive across Worker isolates
-    },
     plugins: authPlugins,
   });
 }
 
 export type Auth = ReturnType<typeof buildAuth>;
+
+/**
+ * The Better Auth instance for the current request, built from the Worker's
+ * Cloudflare env (D1 binding + secrets from wrangler/.dev.vars). Must be called
+ * within request scope.
+ */
+export function getAuth(): Auth {
+  const { env } = getCloudflareContext();
+  return buildAuth(env as unknown as AuthEnv);
+}
