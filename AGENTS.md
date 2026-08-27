@@ -2,7 +2,7 @@
 
 AI context for the **AW File Storage** project. Read this before writing code. It records the stack, the commands, and the non negotiable conventions. The full reasoning lives in [docs/specs/0001-secure-file-storage-platform/](docs/specs/0001-secure-file-storage-platform/index.md); this file is the short version a build needs.
 
-Status: **Phase 0–1 done, Phase 2 (auth) in progress.** Built: scaffold, the tenancy schema + org-isolation wrapper (spec 0002), and Better Auth wiring with a verified sign-in (spec 0001). Remaining in Phase 2: per-account lockout, Resend email, invitations, 2FA enrolment. Then uploads (0003) and the Upload Center UI (0004).
+Status: **Phases 0–3 done (backend); Phase 4 (UI) next.** Built: scaffold; tenancy schema + org isolation (0002); Better Auth with sessions, org scoping, CSRF, lockout, breach check, email, invitations, 2FA (0001); and the full upload/publish pipeline (0003) — presigned direct-to-R2 upload, vCard validation + publish to the public bucket, unpublish/delete, private download links, listing, and the scheduled cleanup. All verified against real R2/D1 via API. **Remaining:** Phase 4 — the Upload Center UI (0004), which wires these `/api/*` routes to the screen in the mock. Deferred: multipart uploads >90 MB; the sign-in page's 2FA code-entry step; password-reset/accept-invitation pages.
 
 ## What this is
 
@@ -67,6 +67,7 @@ Two Cloudflare environments, `staging` and `production`, with separate D1 databa
 - **Next 16 uses `proxy.ts` (export `proxy`), NOT `middleware.ts`.** The middleware convention is deprecated; our CSRF/origin check lives in `src/proxy.ts`.
 - **Better Auth is pinned to 1.4.21.** `@better-auth/cli` (schema generator) lags the runtime; keeping them matched avoids schema drift. Trade-off: no built-in 2FA-code lockout (dropped in migration 0003) — build it ourselves like the password lockout (AC-7). Bump both together when the CLI catches up.
 - After changing Better Auth plugins/options, regenerate the schema with `npx @better-auth/cli@latest generate --config ./better-auth.config.ts --output ./src/server/db/auth-schema.ts -y`, then `drizzle-kit generate` + `wrangler d1 migrations apply`.
+- **R2 is accessed via the S3 API (`aws4fetch`), not the Worker bindings** — presigned URLs for the browser (`src/server/r2.ts`), signed requests server-side (`r2Head`, etc.). Reason: remote R2 bindings in local dev require a registered workers.dev subdomain and broke `next dev`; the S3 API hits the same real bucket everywhere with no extra setup. The `FILES_PRIVATE`/`FILES_PUBLIC` bindings stay declared (local) but unused for now.
 - Better Auth's `rateLimit.storage` must be `"database"` — its default in memory store does not survive across Worker isolates.
 - The `auth` instance and the Drizzle client are built **per request** from `env`, because the D1 binding only exists per request.
 - `nextCookies()` must be the **last** Better Auth plugin so server actions can set the cookie.
