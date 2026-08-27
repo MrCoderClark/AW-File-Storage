@@ -2,7 +2,7 @@
 
 AI context for the **AW File Storage** project. Read this before writing code. It records the stack, the commands, and the non negotiable conventions. The full reasoning lives in [docs/specs/0001-secure-file-storage-platform/](docs/specs/0001-secure-file-storage-platform/index.md); this file is the short version a build needs.
 
-Status: **specs written, no application code yet.** The first task is the scaffold, then the tenancy schema and isolation wrapper (spec 0002), then auth (spec 0001), because everything else sits on those two.
+Status: **Phase 0–1 done, Phase 2 (auth) in progress.** Built: scaffold, the tenancy schema + org-isolation wrapper (spec 0002), and Better Auth wiring with a verified sign-in (spec 0001). Remaining in Phase 2: per-account lockout, Resend email, invitations, 2FA enrolment. Then uploads (0003) and the Upload Center UI (0004).
 
 ## What this is
 
@@ -13,12 +13,12 @@ An internal file storage web app. Staff sign in, upload files into private Cloud
 | Layer | Choice |
 |---|---|
 | Language | TypeScript, strict mode |
-| Framework | Next.js 15, App Router, React 19 |
+| Framework | Next.js 16, App Router, React 19 |
 | Runtime / host | Cloudflare Workers via `@opennextjs/cloudflare` (`nodejs_compat` on) |
 | Database | Cloudflare D1 (SQLite), bound to the Worker |
 | ORM | Drizzle ORM (`drizzle-orm/d1`) — **not** Prisma |
 | Migrations | `drizzle-kit generate` → SQL in `migrations/` → `wrangler d1 migrations apply` |
-| Auth | Better Auth, self hosted, D1 (Drizzle) adapter, `organization` + `twoFactor` + `nextCookies` plugins — **not** hand written, **not** a hosted IdP |
+| Auth | Better Auth **pinned to 1.4.21** (to match `@better-auth/cli`, which lags the runtime), self hosted, D1 (Drizzle) adapter, `organization` + `twoFactor` + `haveIBeenPwned` + `nextCookies` plugins — **not** hand written, **not** a hosted IdP |
 | File storage | Two R2 buckets: `aw-files-private` (staging + private) and `aw-files-public` (published vCards, on `contacts.americaworks.com`) |
 | Uploads | Presigned S3 style `PUT` straight from browser to the private bucket (signed with `aws4fetch`), multipart above 90 MB |
 | Background work | Cloudflare Queues (validate/promote), Cron Triggers (nightly cleanup + reconciliation) |
@@ -64,9 +64,13 @@ Two Cloudflare environments, `staging` and `production`, with separate D1 databa
 ## Environment notes
 
 - **This is a Windows machine; the shell is PowerShell.** Prefer cross platform npm scripts. See the `powershell-windows` skill for shell pitfalls.
+- **Next 16 uses `proxy.ts` (export `proxy`), NOT `middleware.ts`.** The middleware convention is deprecated; our CSRF/origin check lives in `src/proxy.ts`.
+- **Better Auth is pinned to 1.4.21.** `@better-auth/cli` (schema generator) lags the runtime; keeping them matched avoids schema drift. Trade-off: no built-in 2FA-code lockout (dropped in migration 0003) — build it ourselves like the password lockout (AC-7). Bump both together when the CLI catches up.
+- After changing Better Auth plugins/options, regenerate the schema with `npx @better-auth/cli@latest generate --config ./better-auth.config.ts --output ./src/server/db/auth-schema.ts -y`, then `drizzle-kit generate` + `wrangler d1 migrations apply`.
 - Better Auth's `rateLimit.storage` must be `"database"` — its default in memory store does not survive across Worker isolates.
 - The `auth` instance and the Drizzle client are built **per request** from `env`, because the D1 binding only exists per request.
 - `nextCookies()` must be the **last** Better Auth plugin so server actions can set the cookie.
+- Kill a stray `next dev` by PID (`netstat -ano | grep :3000` → `taskkill //F //PID <pid>`); stopping the task wrapper alone can leave the process holding the port.
 
 ## Skills to use
 
