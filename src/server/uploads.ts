@@ -4,6 +4,7 @@ import * as schema from "./db/schema";
 import { uuidv7 } from "./id";
 import { orgDb } from "./org-db";
 import {
+  presignGet,
   presignPut,
   r2Copy,
   r2Delete,
@@ -250,10 +251,79 @@ function publicKeyFor(slug: string): string {
   return `c/${slug}.vcf`;
 }
 
+const DOWNLOAD_LINK_TTL = 300; // 5 minutes (spec 0003 AC-12)
+
 export interface ActorCtx {
   orgId: string;
   userId: string;
   canManageAny: boolean; // owner/admin may act on any file; members only their own
+}
+
+export interface FileListItem {
+  id: string;
+  name: string;
+  kind: "vcard" | "other";
+  status: string;
+  visibility: "private" | "public";
+  sizeBytes: number;
+  publicUrl?: string;
+  createdAt: Date;
+}
+
+/** All live files for the org, newest first, with the public address for published vCards. */
+export async function listFiles(
+  env: UploadEnv,
+  ctx: { orgId: string },
+): Promise<FileListItem[]> {
+  const db = buildDb(env.DB);
+  const rows = await orgDb(ctx.orgId, db).files.listActive();
+  return rows.map((f) => ({
+    id: f.id,
+    name: f.originalName,
+    kind: f.kind,
+    status: f.status,
+    visibility: f.visibility,
+    sizeBytes: f.sizeBytes,
+    publicUrl:
+      f.visibility === "public" ? publicUrlFor(env, f.publicSlug) : undefined,
+    createdAt: f.createdAt,
+  }));
+}
+
+/**
+ * A short-lived signed URL to download a private file's bytes (spec 0003 AC-12).
+ * Any member of the org may request one (all roles can see org files). The
+ * private bucket has no public domain, so this is the only way to read it.
+ */
+export async function createPrivateLink(
+  env: UploadEnv,
+  ctx: ActorCtx,
+  fileId: string,
+): Promise<{ url: string; expiresAt: string }> {
+  const db = buildDb(env.DB);
+  const scoped = orgDb(ctx.orgId, db);
+  const file = await scoped.files.get(fileId);
+  if (!file || file.deletedAt) throw new UploadError(404, "File not found.");
+  if (file.status !== "ready") {
+    throw new UploadError(409, "This file is not ready to download.");
+  }
+
+  const url = await presignGet(
+    r2Config(env),
+    env.R2_PRIVATE_BUCKET,
+    file.storageKey,
+    DOWNLOAD_LINK_TTL,
+  );
+  await scoped.audit.append({
+    actorUserId: ctx.userId,
+    action: "file.link_created",
+    targetType: "file",
+    targetId: fileId,
+  });
+  return {
+    url,
+    expiresAt: new Date(Date.now() + DOWNLOAD_LINK_TTL * 1000).toISOString(),
+  };
 }
 
 function assertCanManage(
