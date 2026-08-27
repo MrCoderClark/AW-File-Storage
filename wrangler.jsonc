@@ -1,43 +1,40 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "aw-file-storage",
-  "main": ".open-next/worker.js",
-  "compatibility_date": "2026-08-01",
-  // nodejs_compat is required by Next.js on Workers (OpenNext).
-  "compatibility_flags": ["nodejs_compat"],
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
-  },
-  "observability": {
-    "enabled": true
-  }
-
-  // ---------------------------------------------------------------------------
-  // Bindings below are added as each phase needs them. Create the resources in
-  // your Cloudflare account first (see the commands the assistant provides),
-  // then uncomment and fill in the ids. Keep production values out of git for
-  // anything sensitive; ids here are safe, secrets go through `wrangler secret`.
-  // ---------------------------------------------------------------------------
-
-  // "d1_databases": [
-  //   {
-  //     "binding": "DB",
-  //     "database_name": "aw-file-storage",
-  //     "database_id": "<from `wrangler d1 create aw-file-storage`>",
-  //     "migrations_dir": "migrations"
-  //   }
-  // ],
-
-  // "r2_buckets": [
-  //   { "binding": "FILES_PRIVATE", "bucket_name": "aw-files-private" },
-  //   { "binding": "FILES_PUBLIC",  "bucket_name": "aw-files-public"  }
-  // ],
-
-  // "queues": {
-  //   "producers": [{ "binding": "UPLOAD_QUEUE", "queue": "aw-upload-processing" }],
-  //   "consumers": [{ "queue": "aw-upload-processing" }]
-  // },
-
-  // "triggers": { "crons": ["0 3 * * *"] }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "aw-file-storage",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2026-08-01",
+	// nodejs_compat is required by Next.js on Workers (OpenNext).
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "aw-file-storage",
+			"database_id": "8094dbad-c1e4-4220-8a52-8f071ed75ba5",
+			"migrations_dir": "migrations"
+		}
+	],
+	// ---------------------------------------------------------------------------
+	// Bindings below are added as each phase needs them. Create the resources in
+	// your Cloudflare account first (see the commands the assistant provides),
+	// then uncomment and fill in the ids. Keep production values out of git for
+	// anything sensitive; ids here are safe, secrets go through `wrangler secret`.
+	// ---------------------------------------------------------------------------
+	// "r2_buckets": [
+	//   { "binding": "FILES_PRIVATE", "bucket_name": "aw-files-private" },
+	//   { "binding": "FILES_PUBLIC",  "bucket_name": "aw-files-public"  }
+	// ],
+	// "queues": {
+	//   "producers": [{ "binding": "UPLOAD_QUEUE", "queue": "aw-upload-processing" }],
+	//   "consumers": [{ "queue": "aw-upload-processing" }]
+	// },
+	// "triggers": { "crons": ["0 3 * * *"] }
 }
