@@ -31,7 +31,7 @@
   },
   "include": [
     "next-env.d.ts",
-    "cloudflare-env.d.ts",
+    "worker-configuration.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
@@ -40,6 +40,7 @@
   "exclude": [
     "node_modules",
     ".open-next",
-    ".wrangler"
+    ".wrangler",
+    "cron"
   ]
 }

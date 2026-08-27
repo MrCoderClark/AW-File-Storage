@@ -14,6 +14,9 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 export function proxy(req: NextRequest) {
   if (!MUTATING.has(req.method)) return NextResponse.next();
 
+  // Bearer-authenticated machine endpoints (no cookies) are not CSRF-exposed.
+  if (req.nextUrl.pathname.startsWith("/api/cron/")) return NextResponse.next();
+
   const origin = req.headers.get("origin");
   const host = req.headers.get("host");
 
