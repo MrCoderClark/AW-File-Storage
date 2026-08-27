@@ -8,17 +8,22 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { uuidv7 } from "../id";
+import { organization, user } from "./auth-schema";
+
+// Re-export Better Auth's tables (user/session/organization/member/invitation/
+// twoFactor/...) so the single Drizzle client and the Better Auth adapter share
+// one schema object. Better Auth owns these; do not edit auth-schema.ts by hand.
+export * from "./auth-schema";
 
 /**
  * This app's own tenant tables (spec 0002). Every one carries a non-null
- * `org_id`; the org-isolation wrapper (org-db.ts) guarantees no query reaches
- * one without an organization in scope.
+ * `org_id` referencing Better Auth's `organization`; the org-isolation wrapper
+ * (org-db.ts) guarantees no query reaches one without an organization in scope.
  *
- * FOREIGN KEYS TO AUTH TABLES ARE DEFERRED: `org_id`, `uploaded_by`, `user_id`,
- * `actor_user_id`, and `deleted_by` reference Better Auth's `organization` and
- * `user` tables, which land in Phase 2 (spec 0001). They are plain text columns
- * here; the FK constraints are added in the Phase 2 migration once those tables
- * exist. Intra-app references (a version/upload -> its file) are enforced now.
+ * `uploaded_by` / `actor_user_id` / `deleted_by` reference `user` WITHOUT
+ * cascade: a departing user is disabled, never hard-deleted, so history
+ * survives (spec 0002). `org_id` cascades, so deleting an organization removes
+ * its files, versions, uploads, and audit rows.
  */
 
 const id = () =>
@@ -40,8 +45,12 @@ export const files = sqliteTable(
   "file",
   {
     id: id(),
-    orgId: text("org_id").notNull(),
-    uploadedBy: text("uploaded_by").notNull(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    uploadedBy: text("uploaded_by")
+      .notNull()
+      .references(() => user.id),
     originalName: text("original_name").notNull(),
     contentType: text("content_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
@@ -57,7 +66,7 @@ export const files = sqliteTable(
     publicSlug: text("public_slug"),
     publishedAt: integer("published_at", { mode: "timestamp_ms" }),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-    deletedBy: text("deleted_by"),
+    deletedBy: text("deleted_by").references(() => user.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -84,7 +93,9 @@ export const fileVersions = sqliteTable(
   "file_version",
   {
     id: id(),
-    orgId: text("org_id").notNull(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
     fileId: text("file_id")
       .notNull()
       .references(() => files.id, { onDelete: "cascade" }),
@@ -92,7 +103,9 @@ export const fileVersions = sqliteTable(
     sizeBytes: integer("size_bytes").notNull(),
     checksumSha256: text("checksum_sha256").notNull(),
     storageKey: text("storage_key").notNull(),
-    uploadedBy: text("uploaded_by").notNull(),
+    uploadedBy: text("uploaded_by")
+      .notNull()
+      .references(() => user.id),
     createdAt: createdAt(),
   },
   (t) => [
@@ -105,8 +118,12 @@ export const uploadSessions = sqliteTable(
   "upload_session",
   {
     id: id(),
-    orgId: text("org_id").notNull(),
-    userId: text("user_id").notNull(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id),
     fileId: text("file_id")
       .notNull()
       .references(() => files.id, { onDelete: "cascade" }),
@@ -126,8 +143,10 @@ export const auditEvents = sqliteTable(
   "audit_event",
   {
     id: id(),
-    orgId: text("org_id").notNull(),
-    actorUserId: text("actor_user_id"),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id").references(() => user.id),
     action: text("action").notNull(),
     targetType: text("target_type").notNull(),
     targetId: text("target_id"),
@@ -144,7 +163,9 @@ export const auditEvents = sqliteTable(
 
 // Drives the per-account lockout in spec 0001 (AC-7). Keyed by user id.
 export const accountLock = sqliteTable("account_lock", {
-  userId: text("user_id").primaryKey(),
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
   failedCount: integer("failed_count").notNull().default(0),
   lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
   lockLevel: integer("lock_level").notNull().default(0),

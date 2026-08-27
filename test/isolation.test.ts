@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildDb } from "../src/server/db";
-import { files } from "../src/server/db/schema";
+import { files, organization, user } from "../src/server/db/schema";
 import { orgDb, OrgScopeError } from "../src/server/org-db";
 
 const db = buildDb(env.DB);
@@ -21,8 +21,25 @@ function newFileInput(name: string, checksum: string) {
   };
 }
 
+// The file FKs now reference Better Auth's user/organization tables, so those
+// rows must exist before a file can be inserted. Seed them fresh each test.
 beforeEach(async () => {
   await db.delete(files);
+  await db.delete(organization);
+  await db.delete(user);
+
+  await db.insert(user).values({
+    id: "user-x",
+    name: "Test User",
+    email: "user-x@example.com",
+    emailVerified: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  await db.insert(organization).values([
+    { id: "org-a", name: "Org A", slug: "org-a", createdAt: new Date() },
+    { id: "org-b", name: "Org B", slug: "org-b", createdAt: new Date() },
+  ]);
 });
 
 describe("organization isolation (spec 0002)", () => {
