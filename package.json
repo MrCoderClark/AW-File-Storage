@@ -9,23 +9,33 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv"
   },
   "dependencies": {
+    "better-auth": "^1.7.2",
+    "drizzle-orm": "^0.45.2",
     "next": "^16.3.3",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@opennextjs/cloudflare": "^1.20.4",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
+    "@vitest/runner": "^4.1.11",
+    "@vitest/snapshot": "^4.1.11",
+    "drizzle-kit": "^0.31.10",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
     "wrangler": "^4.127.0"
   }
 }
