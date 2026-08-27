@@ -205,7 +205,12 @@ export async function finalizeUpload(
   const size = head.size;
 
   if (file.kind === "vcard") {
-    return publishVcard(env, cfg, db, scoped, ctx.orgId, session, size);
+    return publishVcard(env, cfg, db, scoped, ctx.orgId, {
+      id: session.id,
+      fileId: file.id,
+      stagingKey: session.stagingKey,
+      originalName: file.originalName,
+    });
   }
 
   // Any other file: move from staging to its permanent private key.
@@ -241,14 +246,106 @@ async function addUsage(
     .where(eq(schema.organization.id, orgId));
 }
 
+function publicKeyFor(slug: string): string {
+  return `c/${slug}.vcf`;
+}
+
+export interface ActorCtx {
+  orgId: string;
+  userId: string;
+  canManageAny: boolean; // owner/admin may act on any file; members only their own
+}
+
+function assertCanManage(
+  ctx: ActorCtx,
+  file: { uploadedBy: string },
+): void {
+  if (!ctx.canManageAny && file.uploadedBy !== ctx.userId) {
+    throw new UploadError(403, "You can only manage your own files.");
+  }
+}
+
+/**
+ * Unpublish a vCard (spec 0003 AC-11): remove the public object so the address
+ * returns 404, keep the durable private copy, and retire (not recycle) the slug.
+ */
+export async function unpublishVcard(
+  env: UploadEnv,
+  ctx: ActorCtx,
+  fileId: string,
+): Promise<void> {
+  const cfg = r2Config(env);
+  const db = buildDb(env.DB);
+  const scoped = orgDb(ctx.orgId, db);
+
+  const file = await scoped.files.get(fileId);
+  if (!file || file.deletedAt) throw new UploadError(404, "File not found.");
+  assertCanManage(ctx, file);
+  if (file.visibility !== "public" || !file.publicSlug) {
+    return; // already not public — idempotent
+  }
+
+  await r2Delete(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(file.publicSlug));
+  await scoped.files.update(fileId, {
+    visibility: "private",
+    publishedAt: null,
+    // public_slug is intentionally kept so it is retired, not recycled.
+  });
+  await scoped.audit.append({
+    actorUserId: ctx.userId,
+    action: "vcard.unpublished",
+    targetType: "file",
+    targetId: fileId,
+    metadataJson: JSON.stringify({ slug: file.publicSlug }),
+  });
+}
+
+/**
+ * Soft-delete a file (spec 0002 AC-7). If it was published, the public object is
+ * removed immediately so the address stops resolving; the private object is
+ * reclaimed by the scheduled sweep. Usage is decremented.
+ */
+export async function deleteFile(
+  env: UploadEnv,
+  ctx: ActorCtx,
+  fileId: string,
+): Promise<void> {
+  const cfg = r2Config(env);
+  const db = buildDb(env.DB);
+  const scoped = orgDb(ctx.orgId, db);
+
+  const file = await scoped.files.get(fileId);
+  if (!file || file.deletedAt) throw new UploadError(404, "File not found.");
+  assertCanManage(ctx, file);
+
+  if (file.visibility === "public" && file.publicSlug) {
+    await r2Delete(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(file.publicSlug));
+  }
+  await scoped.files.softDelete(fileId, ctx.userId);
+  if (file.sizeBytes > 0) {
+    await db
+      .update(schema.organization)
+      .set({
+        storageUsedBytes: sql`max(0, ${schema.organization.storageUsedBytes} - ${file.sizeBytes})`,
+      })
+      .where(eq(schema.organization.id, ctx.orgId));
+  }
+  await scoped.audit.append({
+    actorUserId: ctx.userId,
+    action: "file.deleted",
+    targetType: "file",
+    targetId: fileId,
+    metadataJson: JSON.stringify({ name: file.originalName }),
+  });
+}
+
 async function publishVcard(
   env: UploadEnv,
   cfg: R2Config,
   db: ReturnType<typeof buildDb>,
   scoped: ReturnType<typeof orgDb>,
   orgId: string,
-  session: { id: string; fileId: string; stagingKey: string },
-  size: number,
+  session: { id: string; fileId: string; stagingKey: string; originalName: string },
 ): Promise<FinalizeResult> {
   const raw = await r2GetText(cfg, env.R2_PRIVATE_BUCKET, session.stagingKey);
   const result = raw ? validateVcard(raw) : ({ ok: false, reason: "No bytes." } as const);
@@ -261,9 +358,14 @@ async function publishVcard(
     throw new UploadError(422, result.reason);
   }
 
+  const normalizedSize = new TextEncoder().encode(result.normalized).length;
   const slug = await uniqueSlug(db, deriveSlug(result.formattedName));
-  const publicKey = `c/${slug}.vcf`;
-  await r2Put(cfg, env.R2_PUBLIC_BUCKET, publicKey, result.normalized, {
+
+  // Durable private copy (kept so a card can be unpublished without losing it),
+  // plus the public publication served at c/<slug>.vcf.
+  const privateKey = `files/${orgId}/${session.fileId}/${session.originalName}`;
+  await r2Put(cfg, env.R2_PRIVATE_BUCKET, privateKey, result.normalized);
+  await r2Put(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(slug), result.normalized, {
     "Content-Type": "text/vcard; charset=utf-8",
     "Content-Disposition": `attachment; filename="${slug}.vcf"`,
     "Cache-Control": "public, max-age=300, s-maxage=300",
@@ -273,14 +375,21 @@ async function publishVcard(
   await scoped.files.update(session.fileId, {
     status: "ready",
     visibility: "public",
-    bucket: "public",
+    bucket: "private", // storage_key points at the durable private copy
     publicSlug: slug,
     publishedAt: new Date(),
-    storageKey: publicKey,
-    sizeBytes: new TextEncoder().encode(result.normalized).length,
+    storageKey: privateKey,
+    sizeBytes: normalizedSize,
     checksumSha256: await sha256Hex(result.normalized),
   });
-  await addUsage(db, orgId, size);
+  await addUsage(db, orgId, normalizedSize);
+  await scoped.audit.append({
+    actorUserId: null,
+    action: "vcard.published",
+    targetType: "file",
+    targetId: session.fileId,
+    metadataJson: JSON.stringify({ slug, url: publicUrlFor(env, slug) }),
+  });
   await scoped.uploads.markComplete(session.id);
 
   return {
