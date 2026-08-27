@@ -2,14 +2,28 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getAuth } from "./auth";
 
+const ABSOLUTE_SESSION_MAX_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (spec 0001 AC-5)
+
 /**
  * The ONLY way feature code learns who the caller is (spec 0001 cross-child
  * contract). Wraps Better Auth's server-side session read. Returns the session
  * + user, or null when there is no valid session.
+ *
+ * Better Auth's `expiresIn` gives an 8h rolling idle ceiling; on top of that we
+ * enforce a hard 7-day cap from creation (AC-5): a session older than that is
+ * rejected here even though its row still exists (the nightly cleanup removes
+ * the row later).
  */
 export async function getSession() {
   const auth = getAuth();
-  return auth.api.getSession({ headers: await headers() });
+  const result = await auth.api.getSession({ headers: await headers() });
+  if (!result) return null;
+
+  const createdAt = new Date(result.session.createdAt).getTime();
+  if (Number.isFinite(createdAt) && Date.now() - createdAt > ABSOLUTE_SESSION_MAX_MS) {
+    return null;
+  }
+  return result;
 }
 
 /** Require a signed-in caller; redirect to sign-in otherwise. Returns the session. */

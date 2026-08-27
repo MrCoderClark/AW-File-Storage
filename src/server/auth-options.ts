@@ -1,4 +1,5 @@
 import { nextCookies } from "better-auth/next-js";
+import { haveIBeenPwned } from "better-auth/plugins/haveibeenpwned";
 import { organization } from "better-auth/plugins/organization";
 import { twoFactor } from "better-auth/plugins/two-factor";
 
@@ -38,7 +39,13 @@ export const authPlugins = [
     },
   }),
   twoFactor({ issuer: "AW File Storage" }),
-  nextCookies(),
+  // Reject known-breached passwords (spec 0001 AC-14). Checks the HIBP range API
+  // with a k-anonymity prefix, so the password never leaves the Worker in full.
+  haveIBeenPwned({
+    customPasswordCompromisedMessage:
+      "This password has appeared in a data breach. Please choose another.",
+  }),
+  nextCookies(), // MUST remain last
 ];
 
 export const authSharedOptions = {

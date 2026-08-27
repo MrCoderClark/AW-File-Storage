@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { eq } from "drizzle-orm";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { authPlugins, authSharedOptions } from "./auth-options";
@@ -18,13 +19,36 @@ export interface AuthEnv {
  * instance. See spec 0001 for the full security rationale.
  */
 export function buildAuth(env: AuthEnv) {
+  const db = buildDb(env.DB);
   return betterAuth({
     ...authSharedOptions,
-    database: drizzleAdapter(buildDb(env.DB), { provider: "sqlite", schema }),
+    database: drizzleAdapter(db, { provider: "sqlite", schema }),
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.APP_URL,
     trustedOrigins: [env.APP_URL], // the ONLY trusted origin; no wildcards
     plugins: authPlugins,
+    databaseHooks: {
+      session: {
+        create: {
+          // Set the acting organization on the session at creation, so
+          // org-scoped queries and requireOrgRole() have an org from the first
+          // request. Uses the user's first membership (users here have one org).
+          before: async (session) => {
+            const [membership] = await db
+              .select({ orgId: schema.member.organizationId })
+              .from(schema.member)
+              .where(eq(schema.member.userId, session.userId))
+              .limit(1);
+            return {
+              data: {
+                ...session,
+                activeOrganizationId: membership?.orgId ?? null,
+              },
+            };
+          },
+        },
+      },
+    },
   });
 }
 
