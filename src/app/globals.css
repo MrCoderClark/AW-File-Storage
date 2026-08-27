@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* Design tokens read off docs/Designs/mock1.jpg (see spec 0004).
+   Tailwind v4 defines the theme in CSS; these generate the utilities
+   (bg-brand-900, text-muted-500, etc.) used across the app shell. */
+@theme {
+  --color-brand-900: #0d2440; /* header, darkest navy */
+  --color-brand-800: #14385c; /* navigation row */
+  --color-brand-600: #1f5d99; /* primary buttons, active nav */
+  --color-accent-500: #2f86d6; /* progress bars, logo mark */
+  --color-surface: #ffffff; /* panels */
+  --color-canvas: #f5f7fa; /* page background */
+  --color-border: #e2e8f0; /* panel edges, dashed drop area */
+  --color-danger-600: #c0392b; /* failed state */
+  --color-muted-500: #64748b; /* secondary text */
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-panel: 6px;
+  --radius-drop: 8px;
+}
+
+html,
+body {
+  background-color: var(--color-canvas);
+  color: #0f172a;
+}

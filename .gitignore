@@ -1,0 +1,32 @@
+# dependencies
+/node_modules
+
+# next / build output
+/.next
+/out
+/.open-next
+/dist
+
+# cloudflare / wrangler
+/.wrangler
+.dev.vars
+wrangler.local.jsonc
+
+# env
+.env
+.env.*
+!.env.example
+
+# generated cloudflare types
+/cloudflare-env.d.ts
+
+# testing
+/coverage
+/playwright-report
+/test-results
+
+# logs / os
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

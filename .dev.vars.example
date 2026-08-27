@@ -1,0 +1,22 @@
+# Copy to `.dev.vars` for local development (never commit `.dev.vars`).
+# In production these are set with `wrangler secret put <NAME>`.
+# Only APP_URL and NEXT_PUBLIC_APP_NAME matter for Phase 0; the rest are
+# filled in as their phases land (see AGENTS.md for the full list).
+
+APP_URL="http://localhost:3000"
+NEXT_PUBLIC_APP_NAME="AW File Storage"
+
+# --- Phase 2, auth (spec 0001) ---
+# BETTER_AUTH_SECRET=""        # long random string; encrypts 2FA secrets too
+# RESEND_API_KEY=""
+# EMAIL_FROM="no-reply@americaworks.com"
+
+# --- Phase 3, uploads (spec 0003) ---
+# R2_ACCOUNT_ID=""
+# R2_ACCESS_KEY_ID=""
+# R2_SECRET_ACCESS_KEY=""
+# R2_PRIVATE_BUCKET="aw-files-private"
+# R2_PUBLIC_BUCKET="aw-files-public"
+# PUBLIC_FILE_DOMAIN="contacts.americaworks.com"
+# CF_API_TOKEN=""
+# CF_ZONE_ID=""
