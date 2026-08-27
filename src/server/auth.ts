@@ -1,10 +1,14 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { eq } from "drizzle-orm";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { authPlugins, authSharedOptions } from "./auth-options";
+import { clearFailures, isLocked, recordFailure } from "./lockout";
+
+const GENERIC_SIGNIN_FAILURE = "Email or password is incorrect.";
 
 /** The env values auth needs: the D1 binding plus the auth secrets/URL. */
 export interface AuthEnv {
@@ -27,6 +31,28 @@ export function buildAuth(env: AuthEnv) {
     baseURL: env.APP_URL,
     trustedOrigins: [env.APP_URL], // the ONLY trusted origin; no wildcards
     plugins: authPlugins,
+    hooks: {
+      // Per-account lockout (AC-7), wrapped around the email sign-in endpoint.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-in/email") return;
+        const email = (ctx.body as { email?: string } | undefined)?.email;
+        if (email && (await isLocked(db, email))) {
+          // Same generic message as a wrong password — never reveal the lock.
+          throw new APIError("UNAUTHORIZED", { message: GENERIC_SIGNIN_FAILURE });
+        }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-in/email") return;
+        const email = (ctx.body as { email?: string } | undefined)?.email;
+        if (!email) return;
+        // A thrown endpoint leaves an APIError in `returned`; success leaves the response.
+        if (ctx.context.returned instanceof APIError) {
+          await recordFailure(db, email);
+        } else {
+          await clearFailures(db, email);
+        }
+      }),
+    },
     databaseHooks: {
       session: {
         create: {
