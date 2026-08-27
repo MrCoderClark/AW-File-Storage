@@ -58,5 +58,12 @@ export async function requireOrgRole(role: Role) {
     // A caller lacking the role is treated as not-found rather than told what exists.
     throw new Error("Forbidden");
   }
+
+  // AC-11: owner/admin cannot reach an admin surface until 2FA is enrolled.
+  const twoFactorEnabled = (session.user as { twoFactorEnabled?: boolean | null })
+    .twoFactorEnabled;
+  if ((actual === "owner" || actual === "admin") && !twoFactorEnabled) {
+    redirect("/enroll-2fa");
+  }
   return { session, role: actual };
 }
