@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1787838839594,
+      "tag": "0000_yellow_mikhail_rasputin",
+      "breakpoints": true
+    }
+  ]
+}
