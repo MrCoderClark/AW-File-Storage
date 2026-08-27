@@ -14,6 +14,12 @@
 	"observability": {
 		"enabled": true
 	},
+	// Non-secret config, available in dev and production. PUBLIC_FILE_DOMAIN is the
+	// host that serves published vCards; currently the bucket's r2.dev URL, swap for
+	// a custom domain later without moving any objects.
+	"vars": {
+		"PUBLIC_FILE_DOMAIN": "pub-b2056b2349884431a72f9ff1c895e0fa.r2.dev"
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
