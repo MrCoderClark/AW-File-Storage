@@ -56,4 +56,8 @@ export const authSharedOptions = {
     updateAge: 60 * 15, // refresh at most every 15 min
     cookieCache: { enabled: false }, // no signed-cookie cache: revocation stays near-instant
   },
+  rateLimit: {
+    enabled: true,
+    storage: "database", // memory storage does NOT survive across Worker isolates
+  },
 } as const;
