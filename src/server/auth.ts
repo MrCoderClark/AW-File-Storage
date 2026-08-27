@@ -6,15 +6,18 @@ import { eq } from "drizzle-orm";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { authPlugins, authSharedOptions } from "./auth-options";
+import { linkEmail, sendEmail } from "./email";
 import { clearFailures, isLocked, recordFailure } from "./lockout";
 
 const GENERIC_SIGNIN_FAILURE = "Email or password is incorrect.";
 
-/** The env values auth needs: the D1 binding plus the auth secrets/URL. */
+/** The env values auth needs: the D1 binding, the auth secrets/URL, and email. */
 export interface AuthEnv {
   DB: D1Database;
   BETTER_AUTH_SECRET: string;
   APP_URL: string;
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
 }
 
 /**
@@ -24,12 +27,37 @@ export interface AuthEnv {
  */
 export function buildAuth(env: AuthEnv) {
   const db = buildDb(env.DB);
+  const emailCfg = {
+    apiKey: env.RESEND_API_KEY,
+    from: env.EMAIL_FROM ?? "no-reply@americaworks.com",
+  };
   return betterAuth({
     ...authSharedOptions,
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.APP_URL,
     trustedOrigins: [env.APP_URL], // the ONLY trusted origin; no wildcards
+    // Email-bearing config lives here (buildAuth has env); the non-function
+    // email options come from authSharedOptions and are preserved by the spread.
+    emailAndPassword: {
+      ...authSharedOptions.emailAndPassword,
+      sendResetPassword: async ({ user, url }) => {
+        await sendEmail(emailCfg, {
+          to: user.email,
+          subject: "Reset your password",
+          html: linkEmail("Reset your password:", url, "Reset password"),
+        });
+      },
+    },
+    emailVerification: {
+      sendVerificationEmail: async ({ user, url }) => {
+        await sendEmail(emailCfg, {
+          to: user.email,
+          subject: "Verify your email",
+          html: linkEmail("Confirm your email address:", url, "Verify email"),
+        });
+      },
+    },
     plugins: authPlugins,
     hooks: {
       // Per-account lockout (AC-7), wrapped around the email sign-in endpoint.
