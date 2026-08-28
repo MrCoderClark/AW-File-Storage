@@ -15,10 +15,14 @@
 		"enabled": true
 	},
 	// Non-secret config, available in dev and production. PUBLIC_FILE_DOMAIN is the
-	// host that serves published vCards; currently the bucket's r2.dev URL, swap for
-	// a custom domain later without moving any objects.
+	// host that serves published vCards — a custom domain on the R2 public bucket
+	// (aw-files-public). Objects stay at c/<slug>.vcf; only the host changed, so
+	// every card URL (existing + new) resolves here without moving any objects.
+	// TRUSTED_ORIGINS: extra exact origins Better Auth accepts alongside APP_URL,
+	// so sign-in works on the custom domain and the workers.dev URL alike.
 	"vars": {
-		"PUBLIC_FILE_DOMAIN": "pub-b2056b2349884431a72f9ff1c895e0fa.r2.dev",
+		"TRUSTED_ORIGINS": "https://www.awvcard.com,https://awvcard.com,https://aw-file-storage.aw-file-storage.workers.dev",
+		"PUBLIC_FILE_DOMAIN": "contacts.awvcard.com",
 		"R2_ACCOUNT_ID": "25712314130a03e3364b9be5286c0eef",
 		"R2_PRIVATE_BUCKET": "aw-files-private",
 		"R2_PUBLIC_BUCKET": "aw-files-public"

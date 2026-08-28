@@ -16,8 +16,23 @@ export interface AuthEnv {
   DB: D1Database;
   BETTER_AUTH_SECRET: string;
   APP_URL: string;
+  /**
+   * Extra exact origins allowed alongside APP_URL, comma separated (e.g. the
+   * workers.dev URL while a custom domain is the canonical APP_URL). Exact
+   * origins only - never a wildcard.
+   */
+  TRUSTED_ORIGINS?: string;
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+}
+
+/** APP_URL plus any explicitly allowed extra origins. Exact matches, no wildcards. */
+function trustedOrigins(env: AuthEnv): string[] {
+  const extra = (env.TRUSTED_ORIGINS ?? "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter((o) => o.length > 0);
+  return [...new Set([env.APP_URL.replace(/\/+$/, ""), ...extra])];
 }
 
 /**
@@ -36,7 +51,7 @@ export function buildAuth(env: AuthEnv) {
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.APP_URL,
-    trustedOrigins: [env.APP_URL], // the ONLY trusted origin; no wildcards
+    trustedOrigins: trustedOrigins(env), // exact origins only; no wildcards
     // Email-bearing config lives here (buildAuth has env); the non-function
     // email options come from authSharedOptions and are preserved by the spread.
     emailAndPassword: {
