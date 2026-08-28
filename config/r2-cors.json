@@ -3,9 +3,10 @@
     {
       "allowed": {
         "origins": [
-        "http://localhost:3000",
-        "https://aw-file-storage.aw-file-storage.workers.dev"
-      ],
+          "http://localhost:3000",
+          "https://www.awvcard.com",
+          "https://aw-file-storage.aw-file-storage.workers.dev"
+        ],
         "methods": ["GET", "PUT"],
         "headers": ["*"]
       },

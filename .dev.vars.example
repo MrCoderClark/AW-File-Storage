@@ -5,6 +5,9 @@
 
 APP_URL="http://localhost:3000"
 NEXT_PUBLIC_APP_NAME="AW File Storage"
+# Extra exact origins Better Auth accepts besides APP_URL (comma separated).
+# In production this is set in wrangler.jsonc `vars`.
+# TRUSTED_ORIGINS=""
 
 # --- Phase 2, auth (spec 0001) ---
 # BETTER_AUTH_SECRET=""        # long random string; encrypts 2FA secrets too
