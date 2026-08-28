@@ -7,8 +7,6 @@ export async function GET() {
   const actor = await getActor();
   if (!actor) return new Response("Unauthorized", { status: 401 });
   const { env } = getCloudflareContext();
-  const files = await listFiles(env as unknown as UploadEnv, {
-    orgId: actor.orgId,
-  });
+  const files = await listFiles(env as unknown as UploadEnv, actor);
   return Response.json({ ok: true, files });
 }

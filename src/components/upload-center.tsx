@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAppData } from "@/components/app-data";
+import { FileManager } from "@/components/file-manager";
 
 type Status =
   | "queued"
@@ -58,6 +60,7 @@ function putWithProgress(
 }
 
 export function UploadCenter() {
+  const { refresh } = useAppData();
   const [items, setItems] = useState<Item[]>([]);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -120,6 +123,7 @@ export function UploadCenter() {
             status: "failed",
             error: body.error ?? "Processing failed.",
           });
+          refresh();
           return;
         }
         const result = (await fin.json()) as {
@@ -130,14 +134,18 @@ export function UploadCenter() {
           status: result.visibility === "public" ? "published" : "private",
           publicUrl: result.publicUrl,
         });
+        // The org now has a new file: refresh Storage Usage, Upload History,
+        // Recent Activity, and the file list without a page reload (AC-10).
+        refresh();
       } catch (e) {
         update(item.id, {
           status: "failed",
           error: e instanceof Error ? e.message : "Upload failed.",
         });
+        refresh();
       }
     },
-    [update],
+    [update, refresh],
   );
 
   // Scheduler: keep at most MAX_CONCURRENT uploads in flight.
@@ -223,6 +231,8 @@ export function UploadCenter() {
           </ul>
         )}
       </div>
+
+      <FileManager />
     </div>
   );
 }

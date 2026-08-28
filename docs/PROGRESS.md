@@ -14,7 +14,7 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 - **Live app:** https://aw-file-storage.aw-file-storage.workers.dev
 - **Owner account:** `jclark@americaworks.com` (created via the bootstrap endpoint)
 - **Public vCard URLs:** `https://pub-b2056b2349884431a72f9ff1c895e0fa.r2.dev/c/<slug>.vcf`
-- **Branch:** `phase-4-ui` (4a + 4b committed; **the deploy-setup commit may still be pending** — see below)
+- **Branch:** `phase-4-ui` (4a + 4b + deploy-setup committed; 4c done, **not yet committed**)
 
 ## What's done (phase by phase, all verified)
 
@@ -24,6 +24,7 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 - **Phase 3 — uploads (spec 0003):** presigned direct-to-R2 upload (`aws4fetch`), server-side finalize, vCard validation + normalization + publish to the public bucket, slug derivation + collision, non-vCard move to a private key, unpublish/delete, private download links, `listFiles`, and scheduled-cleanup logic + endpoint. **Republish (AC-10) was intentionally dropped** — see decisions.
 - **Phase 4a — app shell:** header/nav/rail/footer to the mock, `(app)` route group with auth redirect. **Committed.**
 - **Phase 4b — Upload Center:** interactive drop zone + client upload queue (concurrency 3, progress, badges, retry, copy-link), wired to the API. Duplicate-content uploads handled gracefully (409). **Committed.**
+- **Phase 4c — live rail + file list:** `getRailData` (`src/server/rail.ts`) + `GET /api/rail` feed a client `SideRail` with live Storage Usage, today's Upload History, and role-scoped Recent Activity (org-wide for owner/admin, own-only for members). New `FileManager` lists the org's files (`GET /api/files`) with copy-link/download/unpublish/delete, role-gated by a server-computed `canManage`. A shared `AppDataProvider` context lets a settled upload refresh the rail + list with no page reload (AC-10). Unpublish + delete **verified in-browser.**
 - **Deploy:** live on Cloudflare **Workers Paid** plan (Free plan's 3 MiB limit was exceeded).
 
 ## Production setup (already done)
@@ -54,8 +55,8 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 ## What's next (TODO, roughly in order)
 
 1. **Commit the deploy setup** if not already: `git add -A && git commit -m "chore(deploy): Cloudflare Workers production setup"` (force-dynamic, prod vars, `src/app/api/admin/bootstrap/route.ts`, proxy edit, prod CORS).
-2. **Phase 4c** — bring the rail + file list to life: file list on load (`GET /api/files`) with copy-link/download/unpublish/delete actions, Storage Usage bar, Upload History + Recent Activity.
-3. **Phase 4d** — empty/loading/error states, accessibility, responsive (down to 360px), org switcher.
+2. ~~**Phase 4c** — rail + file list.~~ **Done** — see What's done. (Dashboard page still shows placeholders; its live overview is a small follow-up reusing `getRailData`.)
+3. **Phase 4d** — remaining empty/loading/error states, accessibility (live region, focus, contrast, non-colour signals), responsive down to 360px (collapsing rail + stacked cards), org switcher.
 4. **Cron worker deploy** — fix machine-endpoint auth (Origin header, see Known Issue), set `APP_URL`/`CRON_SECRET` in `cron/`, `wrangler deploy` from `cron/`.
 5. **Deferred auth UI** — the sign-in page's **2FA code-entry step** (backend enforces 2FA but the page doesn't prompt for a code yet), plus password-reset and accept-invitation pages, and the session-management screen (AC-16).
 6. **Custom domain** for vCard URLs (when ready) + `X-Robots-Tag: noindex` transform rule (AC-17).

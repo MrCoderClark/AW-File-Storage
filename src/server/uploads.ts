@@ -268,12 +268,16 @@ export interface FileListItem {
   sizeBytes: number;
   publicUrl?: string;
   createdAt: Date;
+  // Whether THIS caller may unpublish/delete this file: owners/admins may act on
+  // any file, members only on their own (spec 0004 invariant 1; the server
+  // re-checks in each action). Lets the UI hide controls it must not offer.
+  canManage: boolean;
 }
 
 /** All live files for the org, newest first, with the public address for published vCards. */
 export async function listFiles(
   env: UploadEnv,
-  ctx: { orgId: string },
+  ctx: ActorCtx,
 ): Promise<FileListItem[]> {
   const db = buildDb(env.DB);
   const rows = await orgDb(ctx.orgId, db).files.listActive();
@@ -287,6 +291,7 @@ export async function listFiles(
     publicUrl:
       f.visibility === "public" ? publicUrlFor(env, f.publicSlug) : undefined,
     createdAt: f.createdAt,
+    canManage: ctx.canManageAny || f.uploadedBy === ctx.userId,
   }));
 }
 
