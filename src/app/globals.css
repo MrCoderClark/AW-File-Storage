@@ -26,3 +26,17 @@ body {
   color: #0f172a;
   font-family: var(--font-sans);
 }
+
+/* Honour a reduced-motion preference across the app (spec 0004 AC-18). All our
+   motion is opacity/transform/width transitions and the skeleton pulse; this
+   neutralises them without changing layout. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

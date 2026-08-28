@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { AppDataProvider } from "@/components/app-data";
 import { AppHeader } from "@/components/app-header";
 import { AppNav } from "@/components/app-nav";
+import { AppShellBody } from "@/components/app-shell-body";
 import { SideRail } from "@/components/side-rail";
 import { getRailData } from "@/server/rail";
 import { getShellData } from "@/server/shell";
@@ -31,12 +32,11 @@ export default async function AppLayout({
           userEmail={shell.userEmail}
           orgName={shell.orgName}
           role={shell.role}
+          activeOrgId={shell.activeOrgId}
+          orgs={shell.orgs}
         />
         <AppNav />
-        <div className="flex flex-1">
-          <SideRail />
-          <main className="flex-1 bg-canvas px-6 py-8">{children}</main>
-        </div>
+        <AppShellBody rail={<SideRail />}>{children}</AppShellBody>
         <footer className="flex items-center justify-between border-t border-border bg-surface px-6 py-3 text-xs text-muted-500">
           <span>© {new Date().getFullYear()} {appName}. All rights reserved.</span>
           <span className="flex gap-4">

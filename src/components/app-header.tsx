@@ -2,7 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { signOut } from "@/lib/auth-client";
+import { authClient, signOut } from "@/lib/auth-client";
+
+interface OrgSummary {
+  id: string;
+  name: string;
+}
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "AW File Storage";
 
@@ -17,14 +22,19 @@ export function AppHeader({
   userEmail,
   orgName,
   role,
+  activeOrgId,
+  orgs,
 }: {
   userName: string;
   userEmail: string;
   orgName: string;
   role: string;
+  activeOrgId: string;
+  orgs: OrgSummary[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -48,6 +58,24 @@ export function AppHeader({
     await signOut();
     router.push("/sign-in");
   }
+
+  async function switchOrg(organizationId: string) {
+    if (organizationId === activeOrgId || switching) return;
+    setSwitching(true);
+    try {
+      await authClient.organization.setActive({ organizationId });
+      setOpen(false);
+      // A full reload guarantees every panel — including the client islands that
+      // seed from server data (rail) or fetch on mount (file list) — reloads for
+      // the new organization (AC-17). router.refresh() alone leaves their local
+      // state on the previous org.
+      window.location.reload();
+    } catch {
+      setSwitching(false);
+    }
+  }
+
+  const canSwitch = orgs.length > 1;
 
   return (
     <header className="flex h-14 items-center gap-4 bg-brand-900 px-4 text-white">
@@ -114,6 +142,32 @@ export function AppHeader({
               <div className="text-sm font-medium">{userName}</div>
               <div className="truncate text-xs text-muted-500">{userEmail}</div>
             </div>
+            {canSwitch && (
+              <div className="border-b border-border py-1.5">
+                <div className="px-4 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-500">
+                  Organization
+                </div>
+                {orgs.map((o) => {
+                  const active = o.id === activeOrgId;
+                  return (
+                    <button
+                      key={o.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={active}
+                      disabled={switching}
+                      onClick={() => void switchOrg(o.id)}
+                      className="flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-sm hover:bg-canvas disabled:opacity-50"
+                    >
+                      <span className="truncate">{o.name}</span>
+                      {active && (
+                        <CheckIcon className="h-4 w-4 shrink-0 text-accent-500" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <button
               type="button"
               role="menuitem"
@@ -149,6 +203,13 @@ function BellIcon({ className }: { className?: string }) {
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M13.7 21a2 2 0 0 1-3.4 0" strokeLinecap="round" />
+    </svg>
+  );
+}
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
+      <path d="m5 12 5 5L20 7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
