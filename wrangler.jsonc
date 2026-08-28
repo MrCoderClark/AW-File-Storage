@@ -18,7 +18,10 @@
 	// host that serves published vCards; currently the bucket's r2.dev URL, swap for
 	// a custom domain later without moving any objects.
 	"vars": {
-		"PUBLIC_FILE_DOMAIN": "pub-b2056b2349884431a72f9ff1c895e0fa.r2.dev"
+		"PUBLIC_FILE_DOMAIN": "pub-b2056b2349884431a72f9ff1c895e0fa.r2.dev",
+		"R2_ACCOUNT_ID": "25712314130a03e3364b9be5286c0eef",
+		"R2_PRIVATE_BUCKET": "aw-files-private",
+		"R2_PUBLIC_BUCKET": "aw-files-public"
 	},
 	"d1_databases": [
 		{
