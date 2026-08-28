@@ -15,10 +15,17 @@ export function proxy(req: NextRequest) {
   if (!MUTATING.has(req.method)) return NextResponse.next();
 
   // Bearer-authenticated machine endpoints (no cookies) are not CSRF-exposed.
-  if (req.nextUrl.pathname.startsWith("/api/cron/")) return NextResponse.next();
+  const path = req.nextUrl.pathname;
+  if (path.startsWith("/api/cron/") || path.startsWith("/api/admin/")) {
+    return NextResponse.next();
+  }
 
   const origin = req.headers.get("origin");
-  const host = req.headers.get("host");
+  // HTTP/2/3 carries the host as the `:authority` pseudo-header, and a proxy in
+  // front of us may forward it as `x-forwarded-host`, so a literal `Host` header
+  // is not guaranteed. `nextUrl.host` is the last resort.
+  const host =
+    req.headers.get("host") ?? req.headers.get("x-forwarded-host") ?? req.nextUrl.host;
 
   if (!origin || !host) {
     return new NextResponse("Forbidden", { status: 403 });

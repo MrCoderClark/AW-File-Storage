@@ -14,7 +14,7 @@
   --color-danger-600: #c0392b; /* failed state */
   --color-muted-500: #64748b; /* secondary text */
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
   --radius-panel: 6px;
   --radius-drop: 8px;
@@ -24,4 +24,19 @@ html,
 body {
   background-color: var(--color-canvas);
   color: #0f172a;
+  font-family: var(--font-sans);
+}
+
+/* Honour a reduced-motion preference across the app (spec 0004 AC-18). All our
+   motion is opacity/transform/width transitions and the skeleton pulse; this
+   neutralises them without changing layout. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
