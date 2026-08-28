@@ -1,0 +1,17 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "http://localhost:3000",
+          "https://www.awvcard.com",
+          "https://aw-file-storage.aw-file-storage.workers.dev"
+        ],
+        "methods": ["GET", "PUT"],
+        "headers": ["*"]
+      },
+      "exposeHeaders": ["ETag"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}

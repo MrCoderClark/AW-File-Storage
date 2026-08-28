@@ -106,7 +106,7 @@ export const organization = sqliteTable(
     logo: text("logo"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     metadata: text("metadata"),
-    storageQuotaBytes: integer("storage_quota_bytes").default(5497558138880),
+    storageQuotaBytes: integer("storage_quota_bytes").default(10737418240),
     storageUsedBytes: integer("storage_used_bytes").default(0),
     publicDomain: text("public_domain").default("contacts.americaworks.com"),
   },
