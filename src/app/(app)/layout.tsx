@@ -6,6 +6,10 @@ import { getShellData } from "@/server/shell";
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "AW File Storage";
 
+// The shell reads the per-request session (cookies + D1), so it can never be
+// statically prerendered — force dynamic rendering for every (app) route.
+export const dynamic = "force-dynamic";
+
 // The signed-in application shell (spec 0004). Every route under (app) requires
 // a session; anonymous callers are redirected to sign in (AC-16).
 export default async function AppLayout({

@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { uuidv7 } from "./id";
@@ -429,6 +429,34 @@ async function publishVcard(
   }
 
   const normalizedSize = new TextEncoder().encode(result.normalized).length;
+  const checksum = await sha256Hex(result.normalized);
+
+  // Dedup: an identical card already live in this org would violate the
+  // (org_id, checksum) unique index. Fail gracefully instead of crashing.
+  const duplicate = await db
+    .select({ id: schema.files.id })
+    .from(schema.files)
+    .where(
+      and(
+        eq(schema.files.orgId, orgId),
+        eq(schema.files.checksumSha256, checksum),
+        isNull(schema.files.deletedAt),
+        ne(schema.files.id, session.fileId),
+      ),
+    )
+    .limit(1);
+  if (duplicate.length > 0) {
+    await scoped.files.update(session.fileId, {
+      status: "failed",
+      failureReason: "An identical contact card is already published.",
+    });
+    await r2Delete(cfg, env.R2_PRIVATE_BUCKET, session.stagingKey);
+    throw new UploadError(
+      409,
+      "An identical contact card is already published.",
+    );
+  }
+
   const slug = await uniqueSlug(db, deriveSlug(result.formattedName));
 
   // Durable private copy (kept so a card can be unpublished without losing it),
@@ -450,7 +478,7 @@ async function publishVcard(
     publishedAt: new Date(),
     storageKey: privateKey,
     sizeBytes: normalizedSize,
-    checksumSha256: await sha256Hex(result.normalized),
+    checksumSha256: checksum,
   });
   await addUsage(db, orgId, normalizedSize);
   await scoped.audit.append({

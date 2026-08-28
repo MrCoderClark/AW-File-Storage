@@ -2,7 +2,10 @@
   "rules": [
     {
       "allowed": {
-        "origins": ["http://localhost:3000"],
+        "origins": [
+        "http://localhost:3000",
+        "https://aw-file-storage.aw-file-storage.workers.dev"
+      ],
         "methods": ["GET", "PUT"],
         "headers": ["*"]
       },
