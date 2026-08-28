@@ -2,11 +2,12 @@
 
 /** Human-readable byte size, e.g. 1536 -> "1.5 KB", 0 -> "0 B". */
 export function formatBytes(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
+  if (!Number.isFinite(n) || n <= 0) return "0 bytes";
+  const units = ["bytes", "KB", "MB", "GB", "TB"];
   const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+  if (i === 0) return `${n} ${n === 1 ? "byte" : "bytes"}`;
   const value = n / 1024 ** i;
-  const digits = i === 0 || value >= 100 ? 0 : 1;
+  const digits = value >= 100 ? 0 : 1;
   return `${value.toFixed(digits)} ${units[i]}`;
 }
 

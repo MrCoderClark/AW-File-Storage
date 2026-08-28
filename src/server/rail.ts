@@ -38,7 +38,7 @@ const ACTION_SUMMARY: Record<string, string> = {
   "file.uploaded": "Uploaded a file",
 };
 
-function summarize(action: string): string {
+export function summarizeAction(action: string): string {
   return ACTION_SUMMARY[action] ?? action.replace(/[._]/g, " ");
 }
 
@@ -113,7 +113,7 @@ export async function getRailData(): Promise<RailData | null> {
     activity: activityRows.map((r) => ({
       id: r.id,
       action: r.action,
-      summary: summarize(r.action),
+      summary: summarizeAction(r.action),
       actorName: r.actorName ?? "",
       createdAt: new Date(r.createdAt).toISOString(),
     })),

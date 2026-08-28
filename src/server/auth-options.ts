@@ -25,7 +25,7 @@ export const authPlugins = [
         additionalFields: {
           storageQuotaBytes: {
             type: "number",
-            defaultValue: 5497558138880, // 5 TB placeholder (spec 0002)
+            defaultValue: 10737418240, // 10 GiB per org
             input: false,
           },
           storageUsedBytes: { type: "number", defaultValue: 0, input: false },

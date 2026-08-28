@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppData } from "@/components/app-data";
 import { FileManager } from "@/components/file-manager";
+import { formatBytes } from "@/lib/format";
 
 type Status =
   | "queued"
@@ -343,12 +344,6 @@ function CopyLink({ url }: { url: string }) {
       </button>
     </div>
   );
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function CloudUpload({ className }: { className?: string }) {
