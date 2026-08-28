@@ -2,14 +2,17 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { authPlugins, authSharedOptions } from "./auth-options";
 import { linkEmail, sendEmail } from "./email";
 import { clearFailures, isLocked, recordFailure } from "./lockout";
+import { isSuspendedEverywhere } from "./members";
 
 const GENERIC_SIGNIN_FAILURE = "Email or password is incorrect.";
+const SUSPENDED_MESSAGE =
+  "Your access has been suspended. Contact your administrator.";
 
 /** The env values auth needs: the D1 binding, the auth secrets/URL, and email. */
 export interface AuthEnv {
@@ -79,9 +82,14 @@ export function buildAuth(env: AuthEnv) {
       before: createAuthMiddleware(async (ctx) => {
         if (ctx.path !== "/sign-in/email") return;
         const email = (ctx.body as { email?: string } | undefined)?.email;
-        if (email && (await isLocked(db, email))) {
+        if (!email) return;
+        if (await isLocked(db, email)) {
           // Same generic message as a wrong password — never reveal the lock.
           throw new APIError("UNAUTHORIZED", { message: GENERIC_SIGNIN_FAILURE });
+        }
+        // A member suspended in every org they belong to is refused (AC-7).
+        if (await isSuspendedEverywhere({ DB: env.DB }, email)) {
+          throw new APIError("FORBIDDEN", { message: SUSPENDED_MESSAGE });
         }
       }),
       after: createAuthMiddleware(async (ctx) => {
@@ -103,10 +111,20 @@ export function buildAuth(env: AuthEnv) {
           // org-scoped queries and requireOrgRole() have an org from the first
           // request. Uses the user's first membership (users here have one org).
           before: async (session) => {
+            // Prefer an ACTIVE membership so a suspended one is never made the
+            // active org (spec 0005). Legacy rows with a null status count as active.
             const [membership] = await db
               .select({ orgId: schema.member.organizationId })
               .from(schema.member)
-              .where(eq(schema.member.userId, session.userId))
+              .where(
+                and(
+                  eq(schema.member.userId, session.userId),
+                  or(
+                    eq(schema.member.status, "active"),
+                    isNull(schema.member.status),
+                  ),
+                ),
+              )
               .limit(1);
             return {
               data: {

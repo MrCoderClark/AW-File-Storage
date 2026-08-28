@@ -11,10 +11,11 @@ Drop a `.vcf` in the browser → it uploads directly to R2 → validates → pub
 → resolves at a live public URL. Non-vCard files stay private with signed
 download links. Auth, tenancy, uploads, and publishing are all done and verified.
 
-- **Live app:** https://aw-file-storage.aw-file-storage.workers.dev
-- **Owner account:** `jclark@americaworks.com` (created via the bootstrap endpoint)
-- **Public vCard URLs:** `https://pub-b2056b2349884431a72f9ff1c895e0fa.r2.dev/c/<slug>.vcf`
-- **Branch:** `phase-4-ui` (4a + 4b + deploy-setup + 4c committed; 4d done, **not yet committed**)
+- **Live app:** https://www.awvcard.com (custom domain; `awvcard.com` 301→www). Old `*.workers.dev` still resolves.
+- **Owner account:** `jclark@americaworks.com` (prod). Local dev owner: `owner@americaworks.test`.
+- **Public vCard URLs:** `https://contacts.awvcard.com/c/<slug>.vcf` (R2 bucket custom domain; `PUBLIC_FILE_DOMAIN`).
+- **Branch:** `phase-5-user-management` (Phase 5 built, **not yet committed**; prod still runs Phase 4 code — Phase 5 is undeployed).
+- **⚠️ Deploy/migration hazard:** a Drizzle table-rebuild on a Better Auth **parent** table cascade-wiped `member`/`file`/`audit` on D1 (see gotcha #9). Both local and prod `member` tables were restored by hand. **Inspect every migration's SQL before applying.**
 
 ## What's done (phase by phase, all verified)
 
@@ -26,6 +27,18 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 - **Phase 4b — Upload Center:** interactive drop zone + client upload queue (concurrency 3, progress, badges, retry, copy-link), wired to the API. Duplicate-content uploads handled gracefully (409). **Committed.**
 - **Phase 4c — live rail + file list:** `getRailData` (`src/server/rail.ts`) + `GET /api/rail` feed a client `SideRail` with live Storage Usage, today's Upload History, and role-scoped Recent Activity (org-wide for owner/admin, own-only for members). New `FileManager` lists the org's files (`GET /api/files`) with copy-link/download/unpublish/delete, role-gated by a server-computed `canManage`. A shared `AppDataProvider` context lets a settled upload refresh the rail + list with no page reload (AC-10). Unpublish + delete **verified in-browser.**
 - **Phase 4d — dashboard, a11y, responsive, org switcher:** Dashboard rebuilt to `docs/Designs/mock-dashboard.jpg` — stat cards (team members / storage / published cards), an uploads-per-day area chart + a file-types donut (dependency-free inline SVG in `src/components/charts.tsx`), and a recent-activity feed, all from real org data via `getDashboardData` (`src/server/dashboard.ts`). No invented metrics. Org switcher in the header user menu (shown when the user is in >1 org): `getShellData` returns the caller's orgs; selecting one calls `authClient.organization.setActive` then hard-reloads so every panel reflects the new org (AC-17). Accessibility (AC-14/AC-18): the Upload Center has one polite `aria-live` region that announces start/half-way/finish/failure only, progress bars carry `role="progressbar"` + values, and a global `prefers-reduced-motion` rule neutralises motion. Responsive (AC-15): new `AppShellBody` makes the rail an off-canvas drawer behind a "Panels" control below `lg` (Esc/backdrop to close), and file rows stack + action buttons wrap so the layout holds at 360px.
+- **Phase 5 — user management (spec 0005):** the Members section in `/settings` plus the missing self-service pages. Built and verified in local dev; **not yet committed or deployed.**
+  - **Slice 1:** `member.status` (`active`/`suspended`) via the org plugin's `additionalFields` + migration `0004`.
+  - **Prerequisite:** `requireApiRole(minRole)` in `session.ts` returns typed 401/403 for route handlers (the old `requireOrgRole` threw → 500); `requireOrgRole` now `notFound()`s on insufficient role.
+  - **Slice 2:** `/accept-invitation/[id]` repaired — `previewInvite` (never leaks the email on a bad id), account create → browser sign-in → into the app, `member.joined` audit. Reuses the existing `/api/invitations/accept`.
+  - **Slice 3:** roster — `listMembers` (explicit org filter, cursor pagination) + `GET /api/members` + `MembersSection` (search/filter/states, matches `mock-user-management.jpg`).
+  - **Slice 4:** invitations UI — `GET /api/invitations`, invite form, `DELETE .../[id]` (revoke), `POST .../[id]/resend` (rate-limited 429), all audited (`InvitationsPanel`).
+  - **Slice 5:** role change + removal — `PATCH`/`DELETE /api/members/[id]`, last-active-owner (AC-5) + self-action (AC-6) guards, inline role dropdown + Remove confirm, audited.
+  - **Slice 6:** suspension — `setMemberStatus` (revokes sessions in the same action), sign-in refusal in the auth `before` hook, session-create hook prefers an active membership, Suspend/Reactivate UI.
+  - **Slice 7:** detail page `/settings/users/[id]` — sign-in state, storage footprint, 2FA status; **Revoke sessions** + **Reset two-factor** actions (`getMemberDetail`, `member-actions.tsx`).
+  - **Slice 8:** self-service `/forgot-password` + `/reset-password` (shared `AuthShell`) + "Forgot password?" link on sign-in.
+  - **Slice 9:** `test/members.test.ts` — guards, org isolation, session revocation, audit rows.
+  - **Scope extensions (beyond spec 0005, by request):** admin **Set password** + **Send reset link** on the detail page (`adminSetPassword`, `sendMemberResetLink`; the link is returned so it works without Resend), and self-service **name** editing (`ProfileSection`, Better Auth `updateUser`). Spec 0005 deliberately chose self-service-only; these override that — record in the spec's follow-up when reconciling.
 - **Deploy:** live on Cloudflare **Workers Paid** plan (Free plan's 3 MiB limit was exceeded).
 
 ## Production setup (already done)
@@ -47,7 +60,9 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 5. **Workers Paid plan required** to deploy (bundle > 3 MiB).
 6. **Dev-server orphans:** stopping the task wrapper leaves `next dev` holding port 3000. Kill by PID: `netstat -ano | grep :3000` → `taskkill //F //PID <pid>`. Always confirm the server is on 3000, not 3002.
 7. **UI verification:** the user checks UI in their own browser and screenshots — don't drive claude-in-chrome for it.
-8. **Custom domain deferred:** `americaworks.com` DNS is at **Network Solutions** with production Office 365 email — do NOT move the apex. Options: register a small dedicated domain on Cloudflare, or delegate `contacts.americaworks.com` (finicky on Free). For now the `r2.dev` URL is used; switching is a one-line `PUBLIC_FILE_DOMAIN` change (objects don't move). The vCard URL is stored in the user's Exchange "Other Attribute" and turned into a barcode, so a changing URL on update is fine.
+8. **Custom domain — DONE.** Registered `awvcard.com` on Cloudflare. App = Worker custom domain `www.awvcard.com` (canonical `APP_URL`); apex `awvcard.com` 301→www via a Redirect Rule (needs a proxied placeholder A record `@ → 192.0.2.1`). vCards = R2 bucket `aw-files-public` custom domain `contacts.awvcard.com` (`PUBLIC_FILE_DOMAIN`). Sign-in needs the browser origin trusted: added a `TRUSTED_ORIGINS` var (comma-separated) that `auth.ts` merges into Better Auth `trustedOrigins`. Still TODO: `X-Robots-Tag: noindex` transform rule on `contacts.awvcard.com` (AC-17).
+9. **D1 migration cascade wipe (DANGEROUS).** D1 runs each migration in a transaction, where SQLite **ignores `PRAGMA foreign_keys=OFF`**. So a Drizzle table-**rebuild** (emitted when a column default/constraint changes — e.g. the org quota default) does `DROP TABLE parent`, which cascade-deletes every child row (`member`, `file`, `audit_event`, …). Migration `0004` silently wiped these on local AND remote. **Always `cat` the generated SQL before applying; if it `DROP TABLE`s a parent (`organization`/`user`), hand-edit it to `ALTER TABLE` in place.** Restore a wiped membership with the `INSERT INTO member … SELECT FROM user,organization WHERE NOT EXISTS(…)` one-liner.
+10. **HTTP/2 host in `proxy.ts`:** browsers send the host as the `:authority` pseudo-header (no `Host` header), so `req.headers.get("host")` was null behind Cloudflare and the CSRF check 403'd every sign-in on the custom domain. Fixed via `TRUSTED_ORIGINS` + host fallback.
 
 ## KNOWN ISSUE to fix
 
@@ -55,13 +70,13 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 
 ## What's next (TODO, roughly in order)
 
-1. **Commit the deploy setup** if not already: `git add -A && git commit -m "chore(deploy): Cloudflare Workers production setup"` (force-dynamic, prod vars, `src/app/api/admin/bootstrap/route.ts`, proxy edit, prod CORS).
-2. ~~**Phase 4c** — rail + file list.~~ **Done** — see What's done. (Dashboard page still shows placeholders; its live overview is a small follow-up reusing `getRailData`.)
-3. ~~**Phase 4d** — dashboard live overview, accessibility, responsive, org switcher.~~ **Done** — see What's done. Still open from spec 0004: the ETA column (AC-5), the upload table as a semantic `<table>` with caption (currently a labelled list), and the leave-warning + offline pause/resume (AC-13).
-4. **Cron worker deploy** — fix machine-endpoint auth (Origin header, see Known Issue), set `APP_URL`/`CRON_SECRET` in `cron/`, `wrangler deploy` from `cron/`.
-5. **Deferred auth UI** — the sign-in page's **2FA code-entry step** (backend enforces 2FA but the page doesn't prompt for a code yet), plus password-reset and accept-invitation pages, and the session-management screen (AC-16).
-6. **Custom domain** for vCard URLs (when ready) + `X-Robots-Tag: noindex` transform rule (AC-17).
-7. **Multipart uploads** > 90 MB (deferred; most files are tiny).
+1. **Phase 5 — commit, PR/merge, then deploy.** All of Phase 5 (+ scope extensions) is uncommitted on `phase-5-user-management`. Run `npm run typecheck` + `npm test`, then commit/PR/merge. **Deploy Phase 5 to prod** (`npm run deploy`) — prod still runs Phase 4 code, so none of the user-management features are live there yet.
+2. **Before deploying: re-run `migrations apply --remote`** only after confirming `0004` is already applied on prod (it is) — do NOT regenerate migrations that rebuild a parent table (see gotcha #9).
+3. ~~**Phase 4c / 4d**~~ **Done.** Still open from spec 0004: ETA column (AC-5), upload table as a semantic `<table>`, leave-warning + offline pause/resume (AC-13).
+4. **Deferred auth UI** — the sign-in page's **2FA code-entry step** (backend enforces 2FA but the page doesn't prompt for a code yet). accept-invitation + password-reset pages are now **built** (Phase 5).
+5. **Cron worker deploy** — fix machine-endpoint auth (Origin header, see Known Issue), set `APP_URL`/`CRON_SECRET` in `cron/`, `wrangler deploy` from `cron/`.
+6. `X-Robots-Tag: noindex` transform rule on `contacts.awvcard.com` (AC-17). **Multipart uploads** > 90 MB (deferred).
+7. **Reconcile spec 0005** — record the two accepted deviations (admin password reset; self-service name/email edit) in its follow-up.
 8. **`acceptInvite` atomicity** (D1 batch) refinement.
 
 ## Testing / running
