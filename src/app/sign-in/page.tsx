@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { signIn } from "@/lib/auth-client";
@@ -147,15 +148,23 @@ export default function SignInPage() {
                 </div>
               </div>
 
-              <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 rounded-sm border-border accent-brand-600"
-                />
-                Remember me
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="h-4 w-4 rounded-sm border-border accent-brand-600"
+                  />
+                  Remember me
+                </label>
+                <Link
+                  href="/forgot-password"
+                  className="text-sm text-accent-500 hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
 
               {/* Live region so the failure is announced, not just shown. */}
               <p
