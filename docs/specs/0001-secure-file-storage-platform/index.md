@@ -9,7 +9,7 @@ This is the foundation decision for a new internal file storage web app. Staff s
 
 ## Structure
 
-This decision is large enough that it is split into an umbrella (this file, the stack) plus four child specs. Each child is complete enough to build from on its own.
+This decision is large enough that it is split into an umbrella (this file, the stack) plus five child specs. Each child is complete enough to build from on its own.
 
 | Child spec | What it is | Which decision it supports |
 |---|---|---|
@@ -17,8 +17,9 @@ This decision is large enough that it is split into an umbrella (this file, the 
 | [0002-tenancy-and-data-model.md](0002-tenancy-and-data-model.md) | Organizations, roles, and the full D1 schema every other child depends on | The `Primary DB` and `Tenancy` rows |
 | [0003-uploads-and-public-vcard-urls.md](0003-uploads-and-public-vcard-urls.md) | Direct to R2 uploads, the validate then publish pipeline, and the public vCard address | The `File storage` row, and the product goal |
 | [0004-upload-center-ui.md](0004-upload-center-ui.md) | The Upload Center screen from `docs/Designs/mock1.jpg`, plus the app shell | The `UI` row |
+| [0005-user-management.md](0005-user-management.md) | The Members section in Settings: roster, per person detail, invitations you can send, revoke, and resend, account lifecycle (suspend, reactivate, remove, revoke sessions, reset second factor), and self service password reset | The `Auth` and `Tenancy` rows, extended to the people who administer them |
 
-**Cross child contract** (rules that bind all four children together):
+**Cross child contract** (rules that bind all five children together):
 
 1. **Every tenant scoped row carries `org_id`, and every query filters on it.** No exceptions, including the audit log. Child 0002 owns the column, children 0001, 0003, and 0004 must honour it.
 2. **One session helper is the only way to learn who the caller is.** Child 0001 exports `getSession()` (wrapping Better Auth's `auth.api.getSession`) and `requireOrgRole(role)`. Children 0003 and 0004 never read the cookie or call Better Auth for authorization themselves.
