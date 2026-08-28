@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getAuth } from "./auth";
 
 const ABSOLUTE_SESSION_MAX_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (spec 0001 AC-5)
@@ -78,8 +78,9 @@ export async function requireOrgRole(role: Role) {
   const member = await auth.api.getActiveMember({ headers: await headers() });
   const actual = member?.role as Role | undefined;
   if (!actual || RANK[actual] < RANK[role]) {
-    // A caller lacking the role is treated as not-found rather than told what exists.
-    throw new Error("Forbidden");
+    // A caller lacking the role is treated as not-found rather than told what
+    // exists (renders the 404 page, not a 500).
+    notFound();
   }
 
   // AC-11: owner/admin cannot reach an admin surface until 2FA is enrolled.
@@ -89,4 +90,51 @@ export async function requireOrgRole(role: Role) {
     redirect("/enroll-2fa");
   }
   return { session, role: actual };
+}
+
+export interface ApiActor {
+  orgId: string;
+  userId: string;
+  role: Role;
+}
+
+export type ApiRoleResult =
+  | { ok: true; actor: ApiActor }
+  | { ok: false; response: Response };
+
+function apiError(status: number, error: string): Response {
+  return Response.json({ ok: false, error }, { status });
+}
+
+/**
+ * Route-handler counterpart to requireOrgRole (spec 0005). Returns a typed
+ * result instead of redirecting or throwing, so an endpoint can emit a real
+ * 401/403 JSON response rather than the 500 a thrown Error produced. Role gating
+ * only — the second-factor enrolment gate stays on the page-level requireOrgRole,
+ * which every admin surface in this feature sits behind.
+ *
+ * Usage:
+ *   const auth = await requireApiRole("admin");
+ *   if (!auth.ok) return auth.response;
+ *   // auth.actor.{orgId,userId,role}
+ */
+export async function requireApiRole(minRole: Role): Promise<ApiRoleResult> {
+  const session = await getSession();
+  if (!session) return { ok: false, response: apiError(401, "Not signed in.") };
+  const orgId = (session.session as { activeOrganizationId?: string | null })
+    .activeOrganizationId;
+  if (!orgId) {
+    return { ok: false, response: apiError(401, "No active organization.") };
+  }
+  const member = await getAuth().api.getActiveMember({
+    headers: await headers(),
+  });
+  const role = member?.role as Role | undefined;
+  if (!role || RANK[role] < RANK[minRole]) {
+    return {
+      ok: false,
+      response: apiError(403, "You do not have permission to do this."),
+    };
+  }
+  return { ok: true, actor: { orgId, userId: session.user.id, role } };
 }

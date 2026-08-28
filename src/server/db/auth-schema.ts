@@ -125,6 +125,7 @@ export const member = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     role: text("role").default("member").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    status: text("status").default("active"),
   },
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),

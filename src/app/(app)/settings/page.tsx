@@ -1,14 +1,39 @@
-// Settings — profile, password, second factor, and member management (spec 0004
-// scope). Sections are wired up in a later sub-step.
-export default function SettingsPage() {
+import { InvitationsPanel } from "@/components/invitations-panel";
+import { MembersSection } from "@/components/members-section";
+import { ProfileSection } from "@/components/profile-section";
+import { getActor, getSession } from "@/server/session";
+
+// Reads the caller's role + identity per request.
+export const dynamic = "force-dynamic";
+
+// Settings — everyone can edit their own profile; owner/admin also manage the
+// organization's members and invitations (spec 0005). The API re-checks the role.
+export default async function SettingsPage() {
+  const session = await getSession();
+  const actor = await getActor();
+  const canManage = actor?.canManageAny ?? false;
+
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-5xl">
       <h1 className="text-2xl font-semibold text-brand-900">Settings</h1>
       <p className="mt-1 text-sm text-muted-500">
-        Manage your profile, password, two-factor authentication, and members.
+        {canManage
+          ? "Manage your profile and the people in your organization."
+          : "Manage your profile."}
       </p>
-      <div className="mt-6 rounded-[--radius-panel] border border-border bg-surface p-6 text-sm text-muted-500">
-        Settings sections are coming soon.
+
+      <div className="mt-6 space-y-6">
+        <ProfileSection
+          initialName={session?.user.name ?? ""}
+          email={session?.user.email ?? ""}
+        />
+
+        {canManage && (
+          <div>
+            <MembersSection currentUserId={actor?.userId ?? ""} />
+            <InvitationsPanel />
+          </div>
+        )}
       </div>
     </div>
   );
