@@ -63,7 +63,11 @@ export function UploadCenter() {
   const { refresh } = useAppData();
   const [items, setItems] = useState<Item[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ids that have already announced their half-way point, so the live region
+  // reports each milestone once rather than on every progress event (AC-14).
+  const halfAnnounced = useRef<Set<string>>(new Set());
 
   const update = useCallback((id: string, patch: Partial<Item>) => {
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
@@ -107,9 +111,18 @@ export function UploadCenter() {
         };
 
         update(item.id, { status: "uploading", startedAt: Date.now() });
-        await putWithProgress(url, item.file, (sent) =>
-          update(item.id, { bytesSent: sent }),
-        );
+        setAnnouncement(`Uploading ${item.file.name}`);
+        await putWithProgress(url, item.file, (sent) => {
+          update(item.id, { bytesSent: sent });
+          if (
+            item.total > 0 &&
+            sent / item.total >= 0.5 &&
+            !halfAnnounced.current.has(item.id)
+          ) {
+            halfAnnounced.current.add(item.id);
+            setAnnouncement(`${item.file.name} halfway uploaded`);
+          }
+        });
 
         update(item.id, { status: "finalizing", bytesSent: item.total });
         const fin = await fetch("/api/uploads/finalize", {
@@ -123,6 +136,7 @@ export function UploadCenter() {
             status: "failed",
             error: body.error ?? "Processing failed.",
           });
+          setAnnouncement(`${item.file.name} failed`);
           refresh();
           return;
         }
@@ -130,10 +144,16 @@ export function UploadCenter() {
           visibility: "public" | "private";
           publicUrl?: string;
         };
+        const published = result.visibility === "public";
         update(item.id, {
-          status: result.visibility === "public" ? "published" : "private",
+          status: published ? "published" : "private",
           publicUrl: result.publicUrl,
         });
+        setAnnouncement(
+          published
+            ? `${item.file.name} published`
+            : `${item.file.name} uploaded and kept private`,
+        );
         // The org now has a new file: refresh Storage Usage, Upload History,
         // Recent Activity, and the file list without a page reload (AC-10).
         refresh();
@@ -142,6 +162,7 @@ export function UploadCenter() {
           status: "failed",
           error: e instanceof Error ? e.message : "Upload failed.",
         });
+        setAnnouncement(`${item.file.name} failed`);
         refresh();
       }
     },
@@ -161,6 +182,7 @@ export function UploadCenter() {
   }, [items, runUpload, update]);
 
   function retry(id: string) {
+    halfAnnounced.current.delete(id);
     update(id, { status: "queued", error: undefined, bytesSent: 0 });
   }
 
@@ -172,6 +194,11 @@ export function UploadCenter() {
 
   return (
     <div className="mx-auto max-w-3xl">
+      {/* Polite announcements at meaningful moments only (AC-14). */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </div>
+
       <div className="flex flex-col items-center text-center">
         <CloudUpload className="h-14 w-14 text-accent-500" />
         <h1 className="mt-3 text-2xl font-semibold text-brand-900">
@@ -258,7 +285,14 @@ function UploadRow({ item, onRetry }: { item: Item; onRetry: () => void }) {
 
         {showBar && (
           <div className="mt-1.5 flex items-center gap-2">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-canvas">
+            <div
+              className="h-1.5 flex-1 overflow-hidden rounded-full bg-canvas"
+              role="progressbar"
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`Uploading ${item.file.name}`}
+            >
               <div
                 className="h-full rounded-full bg-accent-500 transition-[width]"
                 style={{ width: `${pct}%` }}

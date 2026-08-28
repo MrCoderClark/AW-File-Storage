@@ -14,7 +14,7 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 - **Live app:** https://aw-file-storage.aw-file-storage.workers.dev
 - **Owner account:** `jclark@americaworks.com` (created via the bootstrap endpoint)
 - **Public vCard URLs:** `https://pub-b2056b2349884431a72f9ff1c895e0fa.r2.dev/c/<slug>.vcf`
-- **Branch:** `phase-4-ui` (4a + 4b + deploy-setup committed; 4c done, **not yet committed**)
+- **Branch:** `phase-4-ui` (4a + 4b + deploy-setup + 4c committed; 4d done, **not yet committed**)
 
 ## What's done (phase by phase, all verified)
 
@@ -25,6 +25,7 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 - **Phase 4a — app shell:** header/nav/rail/footer to the mock, `(app)` route group with auth redirect. **Committed.**
 - **Phase 4b — Upload Center:** interactive drop zone + client upload queue (concurrency 3, progress, badges, retry, copy-link), wired to the API. Duplicate-content uploads handled gracefully (409). **Committed.**
 - **Phase 4c — live rail + file list:** `getRailData` (`src/server/rail.ts`) + `GET /api/rail` feed a client `SideRail` with live Storage Usage, today's Upload History, and role-scoped Recent Activity (org-wide for owner/admin, own-only for members). New `FileManager` lists the org's files (`GET /api/files`) with copy-link/download/unpublish/delete, role-gated by a server-computed `canManage`. A shared `AppDataProvider` context lets a settled upload refresh the rail + list with no page reload (AC-10). Unpublish + delete **verified in-browser.**
+- **Phase 4d — dashboard, a11y, responsive, org switcher:** Dashboard now renders live storage + recent activity from `getRailData` (no more placeholders). Org switcher in the header user menu (shown when the user is in >1 org): `getShellData` returns the caller's orgs; selecting one calls `authClient.organization.setActive` then hard-reloads so every panel reflects the new org (AC-17). Accessibility (AC-14/AC-18): the Upload Center has one polite `aria-live` region that announces start/half-way/finish/failure only, progress bars carry `role="progressbar"` + values, and a global `prefers-reduced-motion` rule neutralises motion. Responsive (AC-15): new `AppShellBody` makes the rail an off-canvas drawer behind a "Panels" control below `lg` (Esc/backdrop to close), and file rows stack + action buttons wrap so the layout holds at 360px.
 - **Deploy:** live on Cloudflare **Workers Paid** plan (Free plan's 3 MiB limit was exceeded).
 
 ## Production setup (already done)
@@ -56,7 +57,7 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 
 1. **Commit the deploy setup** if not already: `git add -A && git commit -m "chore(deploy): Cloudflare Workers production setup"` (force-dynamic, prod vars, `src/app/api/admin/bootstrap/route.ts`, proxy edit, prod CORS).
 2. ~~**Phase 4c** — rail + file list.~~ **Done** — see What's done. (Dashboard page still shows placeholders; its live overview is a small follow-up reusing `getRailData`.)
-3. **Phase 4d** — remaining empty/loading/error states, accessibility (live region, focus, contrast, non-colour signals), responsive down to 360px (collapsing rail + stacked cards), org switcher.
+3. ~~**Phase 4d** — dashboard live overview, accessibility, responsive, org switcher.~~ **Done** — see What's done. Still open from spec 0004: the ETA column (AC-5), the upload table as a semantic `<table>` with caption (currently a labelled list), and the leave-warning + offline pause/resume (AC-13).
 4. **Cron worker deploy** — fix machine-endpoint auth (Origin header, see Known Issue), set `APP_URL`/`CRON_SECRET` in `cron/`, `wrangler deploy` from `cron/`.
 5. **Deferred auth UI** — the sign-in page's **2FA code-entry step** (backend enforces 2FA but the page doesn't prompt for a code yet), plus password-reset and accept-invitation pages, and the session-management screen (AC-16).
 6. **Custom domain** for vCard URLs (when ready) + `X-Robots-Tag: noindex` transform rule (AC-17).

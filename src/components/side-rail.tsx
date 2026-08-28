@@ -59,7 +59,7 @@ export function SideRail() {
   }, [version, load]);
 
   return (
-    <aside className="w-60 shrink-0 border-r border-border bg-surface">
+    <aside className="flex h-full w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface">
       {error ? (
         <RailPanel title="Rail">
           <p>Couldn&apos;t load rail data.</p>

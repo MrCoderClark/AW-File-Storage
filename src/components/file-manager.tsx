@@ -165,7 +165,7 @@ function FileRow({ file, onChange }: { file: FileItem; onChange: () => void }) {
   const canDownload = file.visibility === "private" && file.status === "ready";
 
   return (
-    <li className="flex items-start gap-4 px-4 py-3">
+    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium text-slate-800">
@@ -190,7 +190,7 @@ function FileRow({ file, onChange }: { file: FileItem; onChange: () => void }) {
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         {isPublished && file.publicUrl && (
           <RowButton onClick={copyLink} disabled={busy}>
             {copied ? "Copied" : "Copy link"}
