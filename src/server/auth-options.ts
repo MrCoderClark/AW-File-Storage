@@ -36,6 +36,18 @@ export const authPlugins = [
           },
         },
       },
+      member: {
+        additionalFields: {
+          // Per-organization account status (spec 0005). "active" | "suspended".
+          // Server-managed (input: false): a suspended member is refused at
+          // sign-in and has their sessions revoked in the same action.
+          status: {
+            type: "string",
+            defaultValue: "active",
+            input: false,
+          },
+        },
+      },
     },
   }),
   twoFactor({ issuer: "AW File Storage" }),

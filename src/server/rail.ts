@@ -36,6 +36,18 @@ const ACTION_SUMMARY: Record<string, string> = {
   "file.deleted": "Deleted a file",
   "file.link_created": "Created a download link",
   "file.uploaded": "Uploaded a file",
+  "member.invited": "Invited a member",
+  "member.invite_revoked": "Revoked an invitation",
+  "member.invite_resent": "Resent an invitation",
+  "member.joined": "A member joined",
+  "member.role_changed": "Changed a member's role",
+  "member.suspended": "Suspended a member",
+  "member.reactivated": "Reactivated a member",
+  "member.removed": "Removed a member",
+  "member.sessions_revoked": "Revoked a member's sessions",
+  "member.two_factor_reset": "Reset a member's two-factor",
+  "member.password_set": "Set a member's password",
+  "member.password_reset_sent": "Sent a password reset link",
 };
 
 export function summarizeAction(action: string): string {
