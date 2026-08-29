@@ -1,6 +1,9 @@
+import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getAuth } from "./auth";
+import { getDb } from "./db";
+import { member } from "./db/auth-schema";
 
 const ABSOLUTE_SESSION_MAX_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (spec 0001 AC-5)
 
@@ -54,6 +57,42 @@ export async function getActor(): Promise<
     userId: session.user.id,
     canManageAny: role === "owner" || role === "admin",
   };
+}
+
+/**
+ * Whether the caller's active-org membership requires a second factor (admin
+ * set), regardless of whether they've enrolled. Used to hide the self-service
+ * "disable" control (spec 0001 AC-11).
+ */
+export async function activeMembershipTwoFactorRequired(): Promise<boolean> {
+  const session = await getSession();
+  if (!session) return false;
+  const orgId = (session.session as { activeOrganizationId?: string | null })
+    .activeOrganizationId;
+  if (!orgId) return false;
+  const [m] = await getDb()
+    .select({ required: member.twoFactorRequired })
+    .from(member)
+    .where(
+      and(eq(member.userId, session.user.id), eq(member.organizationId, orgId)),
+    )
+    .limit(1);
+  return Boolean(m?.required);
+}
+
+/**
+ * True when the caller's active-org membership requires a second factor but they
+ * have not enrolled one yet (spec 0001 AC-11). The app layout uses this to force
+ * enrolment before any app route renders.
+ */
+export async function twoFactorEnrollmentRequired(): Promise<boolean> {
+  const session = await getSession();
+  const enrolled = Boolean(
+    (session?.user as { twoFactorEnabled?: boolean } | undefined)
+      ?.twoFactorEnabled,
+  );
+  if (!session || enrolled) return false;
+  return activeMembershipTwoFactorRequired();
 }
 
 export type Role = "owner" | "admin" | "member";

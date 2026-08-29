@@ -46,6 +46,13 @@ export const authPlugins = [
             defaultValue: "active",
             input: false,
           },
+          // Admin-set: when true, this member must enrol a second factor before
+          // they can use the app (spec 0001 AC-11, per-member enforcement).
+          twoFactorRequired: {
+            type: "boolean",
+            defaultValue: false,
+            input: false,
+          },
         },
       },
     },

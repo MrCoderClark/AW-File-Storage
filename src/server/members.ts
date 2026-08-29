@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { hashPassword } from "better-auth/crypto";
 import { and, desc, eq, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { type AuthEnv } from "./auth";
 import { authPlugins, authSharedOptions } from "./auth-options";
@@ -287,7 +288,7 @@ export interface MemberDetail {
     lockedUntil: string | null;
   };
   storage: { files: number; bytes: number; published: number };
-  security: { twoFactorEnabled: boolean };
+  security: { twoFactorEnabled: boolean; twoFactorRequired: boolean };
 }
 
 /**
@@ -373,8 +374,39 @@ export async function getMemberDetail(
       bytes: Number(footprint?.bytes ?? 0),
       published: Number(footprint?.published ?? 0),
     },
-    security: { twoFactorEnabled: Boolean(u?.twoFactorEnabled && tf) },
+    security: {
+      twoFactorEnabled: Boolean(u?.twoFactorEnabled && tf),
+      twoFactorRequired: Boolean(m.twoFactorRequired),
+    },
   };
+}
+
+/** Admin-set whether a member must enrol two-factor before using the app (AC-11). */
+export async function setMemberTwoFactorRequired(opts: {
+  env: MemberEnv;
+  orgId: string;
+  actorUserId: string;
+  memberId: string;
+  required: boolean;
+}): Promise<void> {
+  const { env, orgId, actorUserId, memberId, required } = opts;
+  const db = buildDb(env.DB);
+  const m = await getMemberInOrg(db, orgId, memberId);
+  if (!m) throw new MemberError(404, "Member not found.");
+
+  await db
+    .update(member)
+    .set({ twoFactorRequired: required })
+    .where(and(eq(member.id, memberId), eq(member.organizationId, orgId)));
+  await db.insert(auditEvents).values({
+    orgId,
+    actorUserId,
+    action: required
+      ? "member.two_factor_required"
+      : "member.two_factor_optional",
+    targetType: "member",
+    targetId: memberId,
+  });
 }
 
 /** Revoke every session for a member's user (spec 0005 AC-11). Returns the count. */
@@ -461,17 +493,7 @@ export async function adminSetPassword(opts: {
     );
   }
 
-  const auth = betterAuth({
-    ...authSharedOptions,
-    database: drizzleAdapter(db, { provider: "sqlite", schema }),
-    secret: env.BETTER_AUTH_SECRET,
-    baseURL: env.APP_URL,
-    plugins: authPlugins,
-  });
-  const ctx = (await auth.$context) as unknown as {
-    password: { hash: (password: string) => Promise<string> };
-  };
-  const hash = await ctx.password.hash(newPassword);
+  const hash = await hashPassword(newPassword);
 
   const updated = await db
     .update(account)
