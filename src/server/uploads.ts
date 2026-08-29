@@ -50,7 +50,7 @@ async function uniqueSlug(db: ReturnType<typeof buildDb>, base: string) {
     const candidate =
       attempt === 0
         ? base
-        : `${base}-${Array.from(crypto.getRandomValues(new Uint8Array(5)), (n) => b32[n % 32]).join("")}`;
+        : `${base}_${Array.from(crypto.getRandomValues(new Uint8Array(5)), (n) => b32[n % 32]).join("")}`;
     const existing = await db
       .select({ id: schema.files.id })
       .from(schema.files)
@@ -59,7 +59,7 @@ async function uniqueSlug(db: ReturnType<typeof buildDb>, base: string) {
     if (existing.length === 0) return candidate;
   }
   // Extremely unlikely; fall back to an id-based slug.
-  return `${base}-${uuidv7().slice(0, 8)}`;
+  return `${base}_${uuidv7().slice(0, 8)}`;
 }
 
 function r2Config(env: UploadEnv): R2Config {
