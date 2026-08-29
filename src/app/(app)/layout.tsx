@@ -5,6 +5,7 @@ import { AppNav } from "@/components/app-nav";
 import { AppShellBody } from "@/components/app-shell-body";
 import { SideRail } from "@/components/side-rail";
 import { getRailData } from "@/server/rail";
+import { twoFactorEnrollmentRequired } from "@/server/session";
 import { getShellData } from "@/server/shell";
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "AW File Storage";
@@ -22,6 +23,9 @@ export default async function AppLayout({
 }) {
   const shell = await getShellData();
   if (!shell) redirect("/sign-in");
+  // Members an admin has marked "two-factor required" must enrol before any app
+  // route renders (spec 0001 AC-11). /enroll-2fa is outside this group, so no loop.
+  if (await twoFactorEnrollmentRequired()) redirect("/enroll-2fa");
   const rail = await getRailData();
 
   return (

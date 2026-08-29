@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { hashPassword } from "better-auth/crypto";
 import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { authPlugins, authSharedOptions } from "./auth-options";
 import { type AuthEnv } from "./auth";
@@ -338,27 +339,92 @@ export async function acceptInvite(opts: {
     plugins: authPlugins,
   });
 
-  await signupAuth.api.signUpEmail({ body: { email: inv.email, password, name } });
-  // The invited email is verified by virtue of the invitation itself.
-  await db
-    .update(schema.user)
-    .set({ emailVerified: true })
-    .where(eq(schema.user.email, inv.email));
-
-  const [u] = await db
+  // A user with this email may already exist — e.g. they were a member before
+  // and were removed (removeMember deletes only the membership, never the user,
+  // so file history survives). Re-onboard them rather than failing on sign-up.
+  const [existing] = await db
     .select({ id: schema.user.id })
     .from(schema.user)
     .where(eq(schema.user.email, inv.email))
     .limit(1);
 
-  const memberId = uuidv7();
-  await db.insert(schema.member).values({
-    id: memberId,
-    organizationId: inv.organizationId,
-    userId: u.id,
-    role: inv.role ?? "member",
-    createdAt: new Date(),
-  });
+  let userId: string;
+  if (existing) {
+    userId = existing.id;
+    // Only reset the password when the account is orphaned (no membership
+    // anywhere), so an invite can never reset the password of a user who is
+    // still active in another organization.
+    const [anyMembership] = await db
+      .select({ id: schema.member.id })
+      .from(schema.member)
+      .where(eq(schema.member.userId, userId))
+      .limit(1);
+    if (!anyMembership) {
+      const hash = await hashPassword(password);
+      const updated = await db
+        .update(schema.account)
+        .set({ password: hash })
+        .where(
+          and(
+            eq(schema.account.userId, userId),
+            eq(schema.account.providerId, "credential"),
+          ),
+        )
+        .returning({ id: schema.account.id });
+      if (updated.length === 0) {
+        await db.insert(schema.account).values({
+          id: uuidv7(),
+          accountId: userId,
+          providerId: "credential",
+          userId,
+          password: hash,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      }
+      await db
+        .update(schema.user)
+        .set({ name, emailVerified: true })
+        .where(eq(schema.user.id, userId));
+    }
+  } else {
+    await signupAuth.api.signUpEmail({
+      body: { email: inv.email, password, name },
+    });
+    // The invited email is verified by virtue of the invitation itself.
+    await db
+      .update(schema.user)
+      .set({ emailVerified: true })
+      .where(eq(schema.user.email, inv.email));
+    const [u] = await db
+      .select({ id: schema.user.id })
+      .from(schema.user)
+      .where(eq(schema.user.email, inv.email))
+      .limit(1);
+    userId = u.id;
+  }
+
+  // Add the membership (unless somehow already present in this org).
+  const [alreadyMember] = await db
+    .select({ id: schema.member.id })
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.userId, userId),
+        eq(schema.member.organizationId, inv.organizationId),
+      ),
+    )
+    .limit(1);
+  const memberId = alreadyMember?.id ?? uuidv7();
+  if (!alreadyMember) {
+    await db.insert(schema.member).values({
+      id: memberId,
+      organizationId: inv.organizationId,
+      userId,
+      role: inv.role ?? "member",
+      createdAt: new Date(),
+    });
+  }
   await db
     .update(schema.invitation)
     .set({ status: "accepted" })
@@ -367,7 +433,7 @@ export async function acceptInvite(opts: {
   // AC-12: the join is an access-control change and must be audited.
   await db.insert(schema.auditEvents).values({
     orgId: inv.organizationId,
-    actorUserId: u.id,
+    actorUserId: userId,
     action: "member.joined",
     targetType: "member",
     targetId: memberId,
