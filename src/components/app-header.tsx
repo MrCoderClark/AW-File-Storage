@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { Logo } from "@/components/logo";
 import { authClient, signOut } from "@/lib/auth-client";
 
 interface OrgSummary {
@@ -81,7 +82,7 @@ export function AppHeader({
     <header className="flex h-14 items-center gap-4 bg-brand-900 px-4 text-white">
       {/* Logo */}
       <div className="flex items-center gap-2">
-        <CloudIcon className="h-7 w-7 text-accent-500" />
+        <Logo className="h-8 w-8" />
         <div className="leading-tight">
           <div className="font-semibold">{appName}</div>
           {orgName && (
@@ -90,18 +91,7 @@ export function AppHeader({
         </div>
       </div>
 
-      {/* Search */}
-      <div className="mx-auto hidden w-full max-w-md items-center sm:flex">
-        <div className="flex w-full items-center gap-2 rounded-[--radius-panel] bg-white/10 px-3 py-1.5 text-sm text-white/80 focus-within:bg-white/15">
-          <SearchIcon className="h-4 w-4 shrink-0 text-white/50" />
-          <input
-            type="search"
-            placeholder="Search files"
-            aria-label="Search files"
-            className="w-full bg-transparent placeholder:text-white/40 focus:outline-none"
-          />
-        </div>
-      </div>
+      <div className="flex-1" />
 
       {/* Bell */}
       <button
@@ -183,21 +173,6 @@ export function AppHeader({
   );
 }
 
-function CloudIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M6.5 19a4.5 4.5 0 0 1-.36-8.99A6 6 0 0 1 17.7 8.6 4.7 4.7 0 0 1 17.5 19h-11Z" />
-    </svg>
-  );
-}
-function SearchIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <circle cx="11" cy="11" r="7" />
-      <path d="m21 21-4.3-4.3" strokeLinecap="round" />
-    </svg>
-  );
-}
 function BellIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
