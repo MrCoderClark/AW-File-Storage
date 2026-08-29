@@ -7,6 +7,12 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	// Custom domain for the app (added originally via the dashboard). Declared
+	// here so `wrangler deploy` keeps it instead of removing it. The apex
+	// awvcard.com 301-redirects to www via a Cloudflare Redirect Rule (not here).
+	"routes": [
+		{ "pattern": "www.awvcard.com", "custom_domain": true }
+	],
 	"assets": {
 		"directory": ".open-next/assets",
 		"binding": "ASSETS"
