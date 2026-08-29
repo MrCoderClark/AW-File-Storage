@@ -72,18 +72,18 @@ export function validateVcard(raw: string): VcardResult {
 }
 
 /**
- * A url-safe slug from a contact name (spec 0003 AC-8): lowercased, accents
- * stripped, non-alphanumerics collapsed to single hyphens, trimmed, cut to 60.
+ * A url-safe slug from a contact name (spec 0003 AC-8, revised in 0006): accents
+ * stripped, non-alphanumerics collapsed to single underscores, trimmed, cut to
+ * 60 — giving `First_Last` and preserving case (e.g. "Jay Clark" → "Jay_Clark").
  * Uniqueness (and collision suffixing) is handled by the caller against the DB.
  */
 export function deriveSlug(name: string): string {
   const slug = name
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "") // strip diacritics
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "_") // non-alphanumerics → underscore
+    .replace(/^_+|_+$/g, "")
     .slice(0, 60)
-    .replace(/-+$/g, "");
+    .replace(/_+$/g, "");
   return slug || "contact";
 }

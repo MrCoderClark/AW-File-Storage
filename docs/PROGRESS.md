@@ -13,8 +13,8 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 
 - **Live app:** https://www.awvcard.com (custom domain; `awvcard.com` 301→www). Old `*.workers.dev` still resolves.
 - **Owner account:** `jclark@americaworks.com` (prod). Local dev owner: `owner@americaworks.test`.
-- **Public vCard URLs:** `https://contacts.awvcard.com/c/<slug>.vcf` (R2 bucket custom domain; `PUBLIC_FILE_DOMAIN`).
-- **Branch:** `phase-5-user-management` (Phase 5 built, **not yet committed**; prod still runs Phase 4 code — Phase 5 is undeployed).
+- **Public vCard URLs:** `https://contacts.awvcard.com/c/First_Last.vcf` (R2 bucket custom domain; `PUBLIC_FILE_DOMAIN`). Slug is now `First_Last`, case-preserved (revised in Phase 6).
+- **Branch:** `phase-6-create-card` (Phase 6 built, **not yet committed**). Phase 5 is merged + deployed to prod; **Phase 6 is undeployed** (prod runs through Phase 5).
 - **⚠️ Deploy/migration hazard:** a Drizzle table-rebuild on a Better Auth **parent** table cascade-wiped `member`/`file`/`audit` on D1 (see gotcha #9). Both local and prod `member` tables were restored by hand. **Inspect every migration's SQL before applying.**
 
 ## What's done (phase by phase, all verified)
@@ -39,6 +39,7 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
   - **Slice 8:** self-service `/forgot-password` + `/reset-password` (shared `AuthShell`) + "Forgot password?" link on sign-in.
   - **Slice 9:** `test/members.test.ts` — guards, org isolation, session revocation, audit rows.
   - **Scope extensions (beyond spec 0005, by request):** admin **Set password** + **Send reset link** on the detail page (`adminSetPassword`, `sendMemberResetLink`; the link is returned so it works without Resend), and self-service **name** editing (`ProfileSection`, Better Auth `updateUser`). Spec 0005 deliberately chose self-service-only; these override that — record in the spec's follow-up when reconciling.
+- **Phase 6 — create-card form (spec 0006):** a **Create Card** nav tab → `/create-card` with a 3-step wizard (Name & contact → Work → Address) that builds a vCard 3.0 in the browser (`src/lib/vcard-builder.ts`, a TS port of `docs/Designs/vcf Generator.py` + RFC 6350 escaping) and publishes it through the existing upload pipeline, showing the public URL. Niceties: auto full-name from first+last, Title-case on blur (names/org/city etc., not email/phone/state/zip), Country defaults to "USA" (a lone country emits no `ADR`), Enter never publishes (button-only), required-field guard on step 1. Tests in `test/vcard-builder.test.ts`. **Slug format revised:** `deriveSlug` now yields `First_Last` (case-preserved, underscore) instead of lowercase-hyphenated; collision suffix is `_XXXXX`. **`r2Put` fix:** server-side R2 writes now go via a presigned URL + plain fetch (aws4fetch's signed body dropped Content-Length under the Node dev runtime → R2 411). Built + verified in local dev; **not committed/deployed.**
 - **Deploy:** live on Cloudflare **Workers Paid** plan (Free plan's 3 MiB limit was exceeded).
 
 ## Production setup (already done)
@@ -70,8 +71,8 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 
 ## What's next (TODO, roughly in order)
 
-1. **Phase 5 — commit, PR/merge, then deploy.** All of Phase 5 (+ scope extensions) is uncommitted on `phase-5-user-management`. Run `npm run typecheck` + `npm test`, then commit/PR/merge. **Deploy Phase 5 to prod** (`npm run deploy`) — prod still runs Phase 4 code, so none of the user-management features are live there yet.
-2. **Before deploying: re-run `migrations apply --remote`** only after confirming `0004` is already applied on prod (it is) — do NOT regenerate migrations that rebuild a parent table (see gotcha #9).
+1. **Phase 6 — commit, PR/merge, then deploy.** All of Phase 6 is uncommitted on `phase-6-create-card`. `npm run typecheck` + `npm test`, commit/PR/merge, then `npm run deploy`. No migration is involved. (Phase 5 is already merged + deployed.)
+2. ~~**Phase 5**~~ **Done** — merged + deployed. The two scope deviations (admin password reset; self-service name/email edit) still want recording in spec 0005's follow-up.
 3. ~~**Phase 4c / 4d**~~ **Done.** Still open from spec 0004: ETA column (AC-5), upload table as a semantic `<table>`, leave-warning + offline pause/resume (AC-13).
 4. **Deferred auth UI** — the sign-in page's **2FA code-entry step** (backend enforces 2FA but the page doesn't prompt for a code yet). accept-invitation + password-reset pages are now **built** (Phase 5).
 5. **Cron worker deploy** — fix machine-endpoint auth (Origin header, see Known Issue), set `APP_URL`/`CRON_SECRET` in `cron/`, `wrangler deploy` from `cron/`.
