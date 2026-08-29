@@ -6,6 +6,7 @@ import {
   type OrgRole,
   removeMember,
   setMemberStatus,
+  setMemberTwoFactorRequired,
 } from "@/server/members";
 import { requireApiRole } from "@/server/session";
 
@@ -43,10 +44,15 @@ export async function PATCH(
   const body = (await req.json().catch(() => ({}))) as {
     role?: string;
     status?: string;
+    twoFactorRequired?: boolean;
   };
-  if (body.role === undefined && body.status === undefined) {
+  if (
+    body.role === undefined &&
+    body.status === undefined &&
+    body.twoFactorRequired === undefined
+  ) {
     return Response.json(
-      { ok: false, error: "Provide a role or a status to change." },
+      { ok: false, error: "Provide a change to apply." },
       { status: 400 },
     );
   }
@@ -82,6 +88,12 @@ export async function PATCH(
       await setMemberStatus({
         ...base,
         status: body.status as "active" | "suspended",
+      });
+    }
+    if (body.twoFactorRequired !== undefined) {
+      await setMemberTwoFactorRequired({
+        ...base,
+        required: Boolean(body.twoFactorRequired),
       });
     }
     return Response.json({ ok: true });

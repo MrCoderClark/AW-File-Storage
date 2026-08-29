@@ -1,0 +1,1 @@
+ALTER TABLE `member` ADD `two_factor_required` integer DEFAULT false;

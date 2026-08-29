@@ -126,6 +126,9 @@ export const member = sqliteTable(
     role: text("role").default("member").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     status: text("status").default("active"),
+    twoFactorRequired: integer("two_factor_required", {
+      mode: "boolean",
+    }).default(false),
   },
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),
