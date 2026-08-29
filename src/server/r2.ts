@@ -88,11 +88,13 @@ export async function r2Put(
   body: string | ArrayBuffer,
   headers: Record<string, string> = {},
 ): Promise<void> {
-  const res = await client(cfg).fetch(objectUrl(cfg, bucket, key), {
-    method: "PUT",
-    body,
-    headers,
-  });
+  // Use a presigned PUT URL + plain fetch, the same path the browser upload
+  // uses. Signing the body through aws4fetch's own fetch drops the
+  // Content-Length under the Node dev runtime, which R2 rejects with 411; a
+  // presigned URL with a fixed-length byte body always carries the length.
+  const payload = typeof body === "string" ? new TextEncoder().encode(body) : body;
+  const url = await presignPut(cfg, bucket, key, 300);
+  const res = await fetch(url, { method: "PUT", body: payload, headers });
   if (!res.ok) throw new Error(`R2 PUT failed: ${res.status}`);
 }
 

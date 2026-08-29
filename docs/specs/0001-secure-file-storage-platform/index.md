@@ -9,7 +9,7 @@ This is the foundation decision for a new internal file storage web app. Staff s
 
 ## Structure
 
-This decision is large enough that it is split into an umbrella (this file, the stack) plus five child specs. Each child is complete enough to build from on its own.
+This decision is large enough that it is split into an umbrella (this file, the stack) plus six child specs. Each child is complete enough to build from on its own.
 
 | Child spec | What it is | Which decision it supports |
 |---|---|---|
@@ -18,6 +18,7 @@ This decision is large enough that it is split into an umbrella (this file, the 
 | [0003-uploads-and-public-vcard-urls.md](0003-uploads-and-public-vcard-urls.md) | Direct to R2 uploads, the validate then publish pipeline, and the public vCard address | The `File storage` row, and the product goal |
 | [0004-upload-center-ui.md](0004-upload-center-ui.md) | The Upload Center screen from `docs/Designs/mock1.jpg`, plus the app shell | The `UI` row |
 | [0005-user-management.md](0005-user-management.md) | The Members section in Settings: roster, per person detail, invitations you can send, revoke, and resend, account lifecycle (suspend, reactivate, remove, revoke sessions, reset second factor), and self service password reset | The `Auth` and `Tenancy` rows, extended to the people who administer them |
+| [0006-create-card-form.md](0006-create-card-form.md) | A Create Card form (3-step wizard) that builds a vCard from typed fields and publishes it through the existing pipeline — no `.vcf` file needed | The product goal, extending the `File storage` / publish path |
 
 **Cross child contract** (rules that bind all five children together):
 
