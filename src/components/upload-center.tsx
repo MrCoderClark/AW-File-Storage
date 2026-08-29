@@ -74,9 +74,9 @@ export function UploadCenter() {
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
   }, []);
 
-  const addFiles = useCallback((files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const next: Item[] = Array.from(files).map((file) => ({
+  const enqueue = useCallback((files: File[]) => {
+    if (files.length === 0) return;
+    const next: Item[] = files.map((file) => ({
       id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
       file,
       status: "queued",
@@ -85,6 +85,13 @@ export function UploadCenter() {
     }));
     setItems((prev) => [...next, ...prev]);
   }, []);
+
+  const addFiles = useCallback(
+    (files: FileList | null) => {
+      if (files) enqueue(Array.from(files));
+    },
+    [enqueue],
+  );
 
   const runUpload = useCallback(
     async (item: Item) => {
