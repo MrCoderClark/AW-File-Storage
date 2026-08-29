@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Logo } from "@/components/logo";
 import { signIn } from "@/lib/auth-client";
 
 // Layout follows docs/Designs/mock-login.jpg: navy app bar, a two-column body
@@ -39,15 +40,12 @@ export default function SignInPage() {
     <div className="flex min-h-screen flex-col">
       <header className="flex h-14 shrink-0 items-center justify-between bg-brand-900 px-4 text-white sm:px-6">
         <div className="flex items-center gap-2">
-          <CloudIcon className="h-7 w-7 text-accent-500" />
+          <Logo className="h-8 w-8" />
           <div className="leading-tight">
             <div className="font-semibold">{appName}</div>
             <div className="text-[11px] text-white/60">America Works</div>
           </div>
         </div>
-        <p className="hidden text-xs text-white/60 sm:block">
-          Internal staff access only
-        </p>
       </header>
 
       <main className="flex flex-1 items-center bg-canvas px-4 py-10 sm:px-6">
@@ -198,18 +196,6 @@ export default function SignInPage() {
   );
 }
 
-function CloudIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M6.5 19a4.5 4.5 0 0 1-.53-8.97 6 6 0 0 1 11.64-1.4A4.25 4.25 0 0 1 17.75 19H6.5Z" />
-    </svg>
-  );
-}
 
 function CheckCircleIcon({ className }: { className?: string }) {
   return (

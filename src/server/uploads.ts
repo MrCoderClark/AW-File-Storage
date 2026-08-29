@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { uuidv7 } from "./id";
@@ -266,33 +266,89 @@ export interface FileListItem {
   status: string;
   visibility: "private" | "public";
   sizeBytes: number;
+  contentType: string;
   publicUrl?: string;
+  uploadedByName: string;
   createdAt: Date;
-  // Whether THIS caller may unpublish/delete this file: owners/admins may act on
-  // any file, members only on their own (spec 0004 invariant 1; the server
-  // re-checks in each action). Lets the UI hide controls it must not offer.
+  updatedAt: Date;
+  // Whether THIS caller may rename/unpublish/delete this file: owners/admins may
+  // act on any file, members only on their own (spec 0004 invariant 1; the
+  // server re-checks in each action). Lets the UI hide controls it must not offer.
   canManage: boolean;
 }
 
-/** All live files for the org, newest first, with the public address for published vCards. */
+/**
+ * All live files for the org, newest first, with the public address for
+ * published vCards and the uploader's name (spec 0007). Explicit org filter +
+ * a join to `user` for Uploaded By.
+ */
 export async function listFiles(
   env: UploadEnv,
   ctx: ActorCtx,
 ): Promise<FileListItem[]> {
   const db = buildDb(env.DB);
-  const rows = await orgDb(ctx.orgId, db).files.listActive();
+  const rows = await db
+    .select({
+      id: schema.files.id,
+      name: schema.files.originalName,
+      kind: schema.files.kind,
+      status: schema.files.status,
+      visibility: schema.files.visibility,
+      sizeBytes: schema.files.sizeBytes,
+      contentType: schema.files.contentType,
+      publicSlug: schema.files.publicSlug,
+      uploadedBy: schema.files.uploadedBy,
+      uploaderName: schema.user.name,
+      createdAt: schema.files.createdAt,
+      updatedAt: schema.files.updatedAt,
+    })
+    .from(schema.files)
+    .leftJoin(schema.user, eq(schema.user.id, schema.files.uploadedBy))
+    .where(
+      and(eq(schema.files.orgId, ctx.orgId), isNull(schema.files.deletedAt)),
+    )
+    .orderBy(desc(schema.files.createdAt));
+
   return rows.map((f) => ({
     id: f.id,
-    name: f.originalName,
+    name: f.name,
     kind: f.kind,
     status: f.status,
     visibility: f.visibility,
     sizeBytes: f.sizeBytes,
+    contentType: f.contentType,
     publicUrl:
       f.visibility === "public" ? publicUrlFor(env, f.publicSlug) : undefined,
+    uploadedByName: f.uploaderName ?? "Unknown",
     createdAt: f.createdAt,
+    updatedAt: f.updatedAt,
     canManage: ctx.canManageAny || f.uploadedBy === ctx.userId,
   }));
+}
+
+/** Rename a file's display name (spec 0007 AC-4). Org-scoped; canManage; audited. */
+export async function renameFile(
+  env: UploadEnv,
+  ctx: ActorCtx,
+  fileId: string,
+  newName: string,
+): Promise<void> {
+  const name = newName.trim();
+  if (!name) throw new UploadError(400, "A name is required.");
+  const db = buildDb(env.DB);
+  const scoped = orgDb(ctx.orgId, db);
+  const file = await scoped.files.get(fileId);
+  if (!file || file.deletedAt) throw new UploadError(404, "File not found.");
+  assertCanManage(ctx, file);
+
+  await scoped.files.update(fileId, { originalName: name });
+  await scoped.audit.append({
+    actorUserId: ctx.userId,
+    action: "file.renamed",
+    targetType: "file",
+    targetId: fileId,
+    metadataJson: JSON.stringify({ from: file.originalName, to: name }),
+  });
 }
 
 /**
