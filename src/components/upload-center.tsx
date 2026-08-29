@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppData } from "@/components/app-data";
-import { FileManager } from "@/components/file-manager";
 import { formatBytes } from "@/lib/format";
 
 type Status =
@@ -267,7 +266,13 @@ export function UploadCenter() {
         )}
       </div>
 
-      <FileManager />
+      <p className="mt-4 text-center text-sm text-muted-500">
+        Manage all your files on the{" "}
+        <a href="/files" className="text-accent-500 hover:underline">
+          Files
+        </a>{" "}
+        page.
+      </p>
     </div>
   );
 }

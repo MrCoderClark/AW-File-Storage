@@ -1,3 +1,5 @@
+import { Logo } from "@/components/logo";
+
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "AW File Storage";
 
 // Shared chrome for the signed-out pages (sign-in siblings): navy app bar, a
@@ -14,7 +16,7 @@ export function AuthShell({
   return (
     <div className="flex min-h-screen flex-col">
       <header className="flex h-14 shrink-0 items-center gap-2 bg-brand-900 px-4 text-white sm:px-6">
-        <CloudIcon className="h-7 w-7 text-accent-500" />
+        <Logo className="h-8 w-8" />
         <span className="font-semibold">{appName}</span>
       </header>
 
@@ -35,10 +37,3 @@ export function AuthShell({
   );
 }
 
-function CloudIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
-      <path d="M6.5 19a4.5 4.5 0 0 1-.53-8.97 6 6 0 0 1 11.64-1.4A4.25 4.25 0 0 1 17.75 19H6.5Z" />
-    </svg>
-  );
-}
