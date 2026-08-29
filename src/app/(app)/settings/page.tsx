@@ -1,7 +1,12 @@
 import { InvitationsPanel } from "@/components/invitations-panel";
 import { MembersSection } from "@/components/members-section";
 import { ProfileSection } from "@/components/profile-section";
-import { getActor, getSession } from "@/server/session";
+import { TwoFactorSection } from "@/components/two-factor-section";
+import {
+  activeMembershipTwoFactorRequired,
+  getActor,
+  getSession,
+} from "@/server/session";
 
 // Reads the caller's role + identity per request.
 export const dynamic = "force-dynamic";
@@ -12,6 +17,7 @@ export default async function SettingsPage() {
   const session = await getSession();
   const actor = await getActor();
   const canManage = actor?.canManageAny ?? false;
+  const twoFactorRequired = await activeMembershipTwoFactorRequired();
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -26,6 +32,14 @@ export default async function SettingsPage() {
         <ProfileSection
           initialName={session?.user.name ?? ""}
           email={session?.user.email ?? ""}
+        />
+
+        <TwoFactorSection
+          enrolled={Boolean(
+            (session?.user as { twoFactorEnabled?: boolean } | undefined)
+              ?.twoFactorEnabled,
+          )}
+          required={twoFactorRequired}
         />
 
         {canManage && (

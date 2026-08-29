@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Logo } from "@/components/logo";
-import { signIn } from "@/lib/auth-client";
+import { authClient, signIn } from "@/lib/auth-client";
 
 // Layout follows docs/Designs/mock-login.jpg: navy app bar, a two-column body
 // (context on the left, the sign-in card on the right), and a navy footer bar.
@@ -19,6 +19,11 @@ export default function SignInPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  // Second factor: after correct credentials, Better Auth asks for a code when
+  // the account has 2FA enrolled (spec 0001 AC-11).
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState("");
+  const [useBackup, setUseBackup] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -26,11 +31,35 @@ export default function SignInPage() {
     setError(null);
     // rememberMe=false gives a browser-session cookie, so the session dies with
     // the browser — the safer default on shared machines.
-    const { error } = await signIn.email({ email, password, rememberMe });
+    const { data, error } = await signIn.email({ email, password, rememberMe });
     setPending(false);
     if (error) {
       // Generic message: never reveal whether the email exists (spec 0001 AC-1).
       setError("Email or password is incorrect.");
+      return;
+    }
+    // The password was right; the account needs its second factor.
+    if ((data as { twoFactorRedirect?: boolean } | null)?.twoFactorRedirect) {
+      setNeedsCode(true);
+      return;
+    }
+    router.push("/dashboard");
+  }
+
+  async function onVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    setPending(true);
+    setError(null);
+    const { error } = useBackup
+      ? await authClient.twoFactor.verifyBackupCode({ code: code.trim() })
+      : await authClient.twoFactor.verifyTotp({ code: code.trim() });
+    setPending(false);
+    if (error) {
+      setError(
+        useBackup
+          ? "That backup code isn't valid."
+          : "That code isn't correct — enter the current one.",
+      );
       return;
     }
     router.push("/dashboard");
@@ -92,6 +121,75 @@ export default function SignInPage() {
 
           {/* Sign-in card */}
           <div className="mx-auto w-full max-w-md rounded-[--radius-drop] border border-border bg-surface p-6 shadow-sm sm:p-8">
+            {needsCode ? (
+              <>
+                <h2 className="text-xl font-semibold text-brand-900">
+                  Two-factor authentication
+                </h2>
+                <p className="mt-1.5 text-sm text-muted-500">
+                  {useBackup
+                    ? "Enter one of your saved backup codes."
+                    : "Enter the 6-digit code from your authenticator app."}
+                </p>
+                <form onSubmit={onVerifyCode} className="mt-6 flex flex-col gap-4">
+                  <div className="flex items-center gap-2 rounded-[--radius-panel] border border-border bg-canvas px-3 py-2.5 focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/25">
+                    <LockIcon className="h-4 w-4 shrink-0 text-muted-500" />
+                    <input
+                      autoFocus
+                      required
+                      inputMode={useBackup ? "text" : "numeric"}
+                      autoComplete="one-time-code"
+                      placeholder={useBackup ? "Backup code" : "123456"}
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      aria-describedby={error ? "signin-error" : undefined}
+                      className="w-full bg-transparent text-sm tracking-widest placeholder:text-muted-500/70 focus:outline-none"
+                    />
+                  </div>
+                  <p
+                    id="signin-error"
+                    role="alert"
+                    aria-live="polite"
+                    className={`text-sm text-danger-600 ${error ? "" : "sr-only"}`}
+                  >
+                    {error}
+                  </p>
+                  <button
+                    type="submit"
+                    disabled={pending}
+                    className="rounded-[--radius-panel] bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:opacity-60"
+                  >
+                    {pending ? "Verifying…" : "Verify"}
+                  </button>
+                  <div className="flex items-center justify-between text-sm">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUseBackup((v) => !v);
+                        setCode("");
+                        setError(null);
+                      }}
+                      className="text-accent-500 hover:underline"
+                    >
+                      {useBackup ? "Use an authenticator code" : "Use a backup code"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNeedsCode(false);
+                        setUseBackup(false);
+                        setCode("");
+                        setError(null);
+                      }}
+                      className="text-muted-500 hover:underline"
+                    >
+                      Back
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <>
             <h2 className="text-xl font-semibold text-brand-900">
               Sign in to your account
             </h2>
@@ -182,6 +280,8 @@ export default function SignInPage() {
                 {pending ? "Signing in…" : "Sign in"}
               </button>
             </form>
+              </>
+            )}
           </div>
         </div>
       </main>

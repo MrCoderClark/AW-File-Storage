@@ -46,6 +46,8 @@ const ACTION_SUMMARY: Record<string, string> = {
   "member.removed": "Removed a member",
   "member.sessions_revoked": "Revoked a member's sessions",
   "member.two_factor_reset": "Reset a member's two-factor",
+  "member.two_factor_required": "Required two-factor for a member",
+  "member.two_factor_optional": "Made two-factor optional for a member",
   "member.password_set": "Set a member's password",
   "member.password_reset_sent": "Sent a password reset link",
 };

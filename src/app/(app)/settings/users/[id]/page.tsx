@@ -94,11 +94,19 @@ export default async function MemberDetailPage({
           <Row label="Two-factor">
             {member.security.twoFactorEnabled ? "Enrolled" : "Not enrolled"}
           </Row>
+          <Row label="Two-factor required">
+            {member.security.twoFactorRequired ? "Yes" : "No"}
+          </Row>
         </Panel>
       </div>
 
       {!isSelf && (
-        <MemberActions memberId={member.id} memberName={member.name} />
+        <MemberActions
+          memberId={member.id}
+          memberName={member.name}
+          twoFactorRequired={member.security.twoFactorRequired}
+          twoFactorEnabled={member.security.twoFactorEnabled}
+        />
       )}
     </div>
   );
