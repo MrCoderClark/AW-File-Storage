@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AW_SIGNATURE_BRAND,
+  logoForState,
   normalizeState,
   socialsForState,
 } from "../src/lib/signature-brand";
@@ -37,6 +38,23 @@ describe("socialsForState", () => {
     );
     expect(socialsForState(AW_SIGNATURE_BRAND, "")).toBe(
       AW_SIGNATURE_BRAND.socials,
+    );
+  });
+});
+
+describe("logoForState", () => {
+  it("returns the state-specific logo (name or abbreviation)", () => {
+    expect(logoForState(AW_SIGNATURE_BRAND, "California")).toBe("/logos/ca.png");
+    expect(logoForState(AW_SIGNATURE_BRAND, "md")).toBe("/logos/md.png");
+    expect(logoForState(AW_SIGNATURE_BRAND, "DC")).toBe("/logos/dc.png");
+    expect(logoForState(AW_SIGNATURE_BRAND, "New York")).toBe("/aw-logo.png");
+  });
+  it("falls back to the default logo for unmapped/empty states", () => {
+    expect(logoForState(AW_SIGNATURE_BRAND, "TX")).toBe(
+      AW_SIGNATURE_BRAND.logoPath,
+    );
+    expect(logoForState(AW_SIGNATURE_BRAND, "")).toBe(
+      AW_SIGNATURE_BRAND.logoPath,
     );
   });
 });
