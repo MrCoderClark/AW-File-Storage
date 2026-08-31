@@ -97,7 +97,7 @@ Add `status` to `member` through the organization plugin's `additionalFields`, t
 
 Placement and shape, as chosen: a Members section inside `/settings` (not a new top level tab), with a full page per person at `/settings/users/<id>` rather than a drawer.
 
-Role rules, as chosen: any owner or admin may act on anyone, including other owners. The only structural limits are the last active owner guard and the self action guard. Removal keeps every file and leaves published cards live. Password reset is self service only, with no admin triggered reset button.
+Role rules, as chosen: any owner or admin may act on anyone, including other owners. The only structural limits are the last active owner guard and the self action guard. Removal keeps every file and leaves published cards live. Password reset is self service only, with no admin triggered reset button. **(Amended after shipping — admin Set password and Send reset link were added by request; see [Amendments](#amendments).)**
 
 **Implementation skills**: `tailwindcss-v4` (`C:\Users\jclark\.agents\skills\tailwindcss-v4\`) · `frontend-design` (`C:\Users\jclark\.agents\skills\frontend-design\`) · `playwright` (`C:\Users\jclark\.agents\skills\playwright\`) · `powershell-windows` (`C:\Users\jclark\.codeium\windsurf\skills\powershell-windows\`)
 
@@ -229,3 +229,15 @@ No build approach is recorded in `AGENTS.md`, so this plan assumes end to end ve
 - [ ] Fix `requireOrgRole` to produce a 403 response rather than a thrown `Error`, before the endpoints in this spec are built on it.
 - [ ] Consider an owner transfer action. Ownership can currently only move by promoting a second owner, and nothing demotes the original except another owner acting on them.
 - [ ] The Cloudflare Workers, Drizzle, and Better Auth community skills are still not installed (already noted in the umbrella's Follow up list). They would materially help the migration and session revocation steps here.
+
+## Amendments
+
+Recorded 2026-08-31, reconciling this spec with what actually shipped in Phase 5 (see `docs/PROGRESS.md`). Two changes were made by request that go beyond — and in the first case reverse — the Decision above. Neither changes the data model or the acceptance criteria; they extend the surface.
+
+1. **Admin-triggered password help was added**, overriding "Password reset is self service only, with no admin triggered reset button" (Decision) and directly resolving the Consequences negative "No admin can help a person whose email access is broken." The member detail page (`/settings/users/[id]`) gained two owner/admin actions in `src/components/member-actions.tsx`, backed by `adminSetPassword` and `sendMemberResetLink` in `src/server/members.ts`:
+   - **Set password** — an admin sets a new password directly (hashed via `hashPassword` from `better-auth/crypto`).
+   - **Send reset link** — issues a Better Auth reset link; the link is also returned in the response so it works even while `RESEND_API_KEY` is unset in production.
+
+   Both are audited like every other member mutation and gated to owner/admin (behind 2FA, per the Security model). This is an authenticated admin path — the enumeration and self-service protections on the public `/forgot-password` / `/reset-password` flow (AC-13) are unchanged. Trade-off: it hands any admin a direct credential-reset capability over any member, so it should be re-evaluated under the same containment review as Follow-up item 1 if the role matrix is ever tightened.
+
+2. **Self-service profile name editing was added**, which this spec did not cover (it scoped self-service to password reset only). `src/components/profile-section.tsx` lets a signed-in user edit their own display name via Better Auth `updateUser`. No new endpoint or audit action; it uses Better Auth's own user-update path.
