@@ -1,5 +1,9 @@
 # Keep published vCards out of search results (spec 0001 AC-17)
 
+> **Status: applied + verified (2026-08-31).** The rule below is live on the
+> `awvcard.com` zone; a published card returns `x-robots-tag: noindex, nofollow`.
+> This doc stays as the reproducible spec for the rule.
+
 Published cards are served **directly from the R2 public bucket** (`aw-files-public`)
 via its custom domain `contacts.awvcard.com`. The app Worker is **not** in that
 request path, and R2 only emits standard object metadata (`Content-Type`,
