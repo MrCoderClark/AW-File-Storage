@@ -30,7 +30,7 @@ export default async function MemberDetailPage({
   return (
     <div className="mx-auto max-w-3xl">
       <Link
-        href="/settings"
+        href="/settings/members"
         className="text-sm text-accent-500 hover:underline"
       >
         ← Back to members
