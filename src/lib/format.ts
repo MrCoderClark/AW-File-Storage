@@ -11,6 +11,22 @@ export function formatBytes(n: number): string {
   return `${value.toFixed(digits)} ${units[i]}`;
 }
 
+/**
+ * A short human duration from seconds, e.g. 14 -> "14s", 83 -> "1m 23s". Used for
+ * the upload ETA (spec 0004 AC-5). Returns "" for non-finite/negative input so a
+ * caller can withhold a nonsense estimate rather than render it.
+ */
+export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  const s = Math.ceil(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return rem ? `${m}m ${rem}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
 /** Compact relative time from an ISO string, e.g. "3m ago", "just now". */
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();
