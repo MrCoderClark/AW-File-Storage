@@ -16,6 +16,11 @@ describe("formatPhoneDisplay", () => {
     expect(formatPhoneDisplay("+44 20 7946 0000")).toBe("+44 20 7946 0000");
     expect(formatPhoneDisplay("")).toBe("");
   });
+  it("returns '' for values with no digits (empty Excel cell → 'nan')", () => {
+    expect(formatPhoneDisplay("nan")).toBe("");
+    expect(formatPhoneDisplay("N/A")).toBe("");
+    expect(formatPhoneDisplay("  ")).toBe("");
+  });
 });
 
 describe("parseVcard", () => {
@@ -112,6 +117,20 @@ describe("parseVcard", () => {
     expect(parsed.workPhone).toBe("");
     expect(parsed.fax).toBe("");
     expect(parsed.address.formatted).toBe("");
+  });
+
+  it("drops a phone with no real digits (e.g. a 'nan' fax from an empty cell)", () => {
+    const raw = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      "FN:Joe",
+      "TEL;TYPE=CELL,VOICE:12125550100",
+      "TEL;TYPE=WORK,FAX:nan",
+      "END:VCARD",
+    ].join("\r\n");
+    const parsed = parseVcard(raw);
+    expect(parsed.mobilePhone).toBe("(212) 555-0100");
+    expect(parsed.fax).toBe("");
   });
 
   it("handles vCard 2.1 bare type params", () => {
