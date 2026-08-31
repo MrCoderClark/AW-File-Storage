@@ -7,7 +7,11 @@ import { AW_SIGNATURE_BRAND, logoForState } from "@/lib/signature-brand";
 import { buildSignatureHtml } from "@/lib/signature-html";
 import { getCardForSignature } from "@/server/signature";
 import { getActor } from "@/server/session";
-import { resolveSocials, type SocialLinksEnv } from "@/server/social-links";
+import {
+  getStateLogoUrl,
+  resolveSocials,
+  type SocialLinksEnv,
+} from "@/server/social-links";
 import type { UploadEnv } from "@/server/uploads";
 
 // Printable / copyable signature for a published vCard (spec 0009). Lives inside
@@ -65,13 +69,23 @@ export default async function SignaturePage({
   }
 
   const brand = AW_SIGNATURE_BRAND;
+  // Logo: an uploaded per-state logo (absolute R2 URL) wins; otherwise the
+  // built-in state logo, made absolute against the app origin.
+  const state = resolved.card.address.state;
+  const uploadedLogo = await getStateLogoUrl(
+    env as unknown as SocialLinksEnv,
+    actor.orgId,
+    state,
+  );
+  const logoUrl = uploadedLogo ?? `${base}${logoForState(brand, state)}`;
+
   const input = {
     card: resolved.card,
     publicUrl: resolved.publicUrl,
     qrUrl,
     baseUrl: base,
     socials,
-    logoPath: logoForState(brand, resolved.card.address.state),
+    logoUrl,
     brand,
   };
 

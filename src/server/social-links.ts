@@ -8,6 +8,7 @@ import {
 import { buildDb } from "./db";
 import { orgSocialLinks } from "./db/schema";
 import { uuidv7 } from "./id";
+import { r2Delete, r2Put, type R2Config } from "./r2";
 
 /**
  * Per-state social links for printable signatures (spec 0009 follow-up). The
@@ -23,13 +24,30 @@ export interface SocialLinksEnv {
   DB: D1Database;
 }
 
+/** Extra env a logo upload needs (R2 public bucket writes). */
+export interface LogoUploadEnv extends SocialLinksEnv {
+  R2_ACCOUNT_ID: string;
+  R2_ACCESS_KEY_ID: string;
+  R2_SECRET_ACCESS_KEY: string;
+  R2_PUBLIC_BUCKET: string;
+  PUBLIC_FILE_DOMAIN?: string;
+}
+
 export interface SocialLinkRow {
   state: string;
   facebook: string | null;
   x: string | null;
   instagram: string | null;
+  logoUrl: string | null;
   updatedAt: Date;
 }
+
+/** Allowed logo image types → file extension. */
+const LOGO_TYPES: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+};
+const MAX_LOGO_BYTES = 1024 * 1024; // 1 MB
 
 export class SocialLinkError extends Error {
   constructor(
@@ -62,6 +80,7 @@ export async function listSocialLinks(
       facebook: orgSocialLinks.facebook,
       x: orgSocialLinks.x,
       instagram: orgSocialLinks.instagram,
+      logoUrl: orgSocialLinks.logoUrl,
       updatedAt: orgSocialLinks.updatedAt,
     })
     .from(orgSocialLinks)
@@ -132,6 +151,106 @@ export async function resolveSocials(
     };
   }
   return socialsForState(AW_SIGNATURE_BRAND, cardState);
+}
+
+/**
+ * The uploaded logo URL for a card's state (exact-state row → org "*" row →
+ * null). Null means the caller should use the built-in `logosByState` fallback.
+ */
+export async function getStateLogoUrl(
+  env: SocialLinksEnv,
+  orgId: string,
+  cardState: string,
+): Promise<string | null> {
+  const abbr = normalizeState(cardState);
+  const wanted = abbr ? [abbr, "*"] : ["*"];
+  const db = buildDb(env.DB);
+  const rows = await db
+    .select({ state: orgSocialLinks.state, logoUrl: orgSocialLinks.logoUrl })
+    .from(orgSocialLinks)
+    .where(
+      and(eq(orgSocialLinks.orgId, orgId), inArray(orgSocialLinks.state, wanted)),
+    );
+  const pick =
+    (abbr && rows.find((r) => r.state === abbr && r.logoUrl)?.logoUrl) ||
+    rows.find((r) => r.state === "*" && r.logoUrl)?.logoUrl;
+  return pick ?? null;
+}
+
+/** Upsert just the logo URL on a state's row (creates the row if needed). */
+export async function setStateLogoUrl(
+  env: SocialLinksEnv,
+  orgId: string,
+  state: string,
+  logoUrl: string | null,
+): Promise<void> {
+  const key = normKey(state);
+  if (!key) throw new SocialLinkError(400, "A valid state is required.");
+  const db = buildDb(env.DB);
+  const now = new Date();
+  await db
+    .insert(orgSocialLinks)
+    .values({ id: uuidv7(), orgId, state: key, logoUrl, createdAt: now, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [orgSocialLinks.orgId, orgSocialLinks.state],
+      set: { logoUrl, updatedAt: now },
+    });
+}
+
+function r2Config(env: LogoUploadEnv): R2Config {
+  return {
+    accountId: env.R2_ACCOUNT_ID,
+    accessKeyId: env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+  };
+}
+
+/**
+ * Store an uploaded logo in the R2 public bucket and record its URL on the
+ * state's row. Validates type + size; returns a cache-busted public URL so a
+ * replacement is picked up. Owner/admin only (enforced at the route).
+ */
+export async function uploadStateLogo(
+  env: LogoUploadEnv,
+  orgId: string,
+  state: string,
+  bytes: ArrayBuffer,
+  contentType: string,
+): Promise<string> {
+  const key = normKey(state);
+  if (!key) throw new SocialLinkError(400, "A valid state is required.");
+  const ext = LOGO_TYPES[contentType];
+  if (!ext) throw new SocialLinkError(415, "Logo must be a PNG or JPEG image.");
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_LOGO_BYTES) {
+    throw new SocialLinkError(413, "Logo must be between 1 byte and 1 MB.");
+  }
+
+  const objectKey = `logos/${orgId}/${key}.${ext}`;
+  await r2Put(r2Config(env), env.R2_PUBLIC_BUCKET, objectKey, bytes, {
+    "Content-Type": contentType,
+    "Cache-Control": "public, max-age=300",
+  });
+  const domain = env.PUBLIC_FILE_DOMAIN ?? "contacts.awvcard.com";
+  const logoUrl = `https://${domain}/${objectKey}?v=${Date.now()}`;
+  await setStateLogoUrl(env, orgId, key, logoUrl);
+  return logoUrl;
+}
+
+/** Remove a state's uploaded logo: delete the object(s) and clear the URL. */
+export async function clearStateLogo(
+  env: LogoUploadEnv,
+  orgId: string,
+  state: string,
+): Promise<void> {
+  const key = normKey(state);
+  if (!key) return;
+  const cfg = r2Config(env);
+  for (const ext of Object.values(LOGO_TYPES)) {
+    await r2Delete(cfg, env.R2_PUBLIC_BUCKET, `logos/${orgId}/${key}.${ext}`).catch(
+      () => {},
+    );
+  }
+  await setStateLogoUrl(env, orgId, key, null);
 }
 
 /**

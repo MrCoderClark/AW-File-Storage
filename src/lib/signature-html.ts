@@ -19,8 +19,8 @@ export interface SignatureInput {
   baseUrl: string;
   /** Resolved social links for this card's state (from the org's settings). */
   socials: Socials;
-  /** Resolved logo path for this card's state (from logoForState). */
-  logoPath: string;
+  /** Resolved absolute logo URL for this card's state (uploaded or built-in). */
+  logoUrl: string;
   brand: SignatureBrand;
 }
 
@@ -108,9 +108,8 @@ function gap(px: number): string {
  * a second full-width row beneath.
  */
 export function buildSignatureHtml(input: SignatureInput): string {
-  const { card, qrUrl, baseUrl, logoPath, brand } = input;
+  const { card, qrUrl, baseUrl, logoUrl, brand } = input;
   const c = brand;
-  const logoUrl = `${baseUrl}${logoPath}`;
 
   const audience = `${alink(c.employersUrl, "Employers", c)}<span style="color:${c.textColor};"> | </span>${alink(c.jobSeekersUrl, "Job Seekers", c)}`;
 
