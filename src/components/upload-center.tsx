@@ -9,6 +9,7 @@ type Status =
   | "requesting"
   | "uploading"
   | "finalizing"
+  | "paused"
   | "published"
   | "private"
   | "failed"
@@ -32,6 +33,8 @@ interface Item {
 }
 
 const ACTIVE: Status[] = ["requesting", "uploading", "finalizing"];
+// Statuses that mean "not done yet" — gate the leave-warning (AC-13).
+const UNFINISHED: Status[] = [...ACTIVE, "queued", "paused"];
 const MAX_CONCURRENT = 3;
 // Withhold the ETA until we have this much elapsed time (and ≥2 samples, so a
 // rate exists), rather than showing a wild first estimate (AC-5).
@@ -42,11 +45,16 @@ const BADGE: Record<Status, { label: string; className: string }> = {
   requesting: { label: "Starting", className: "bg-slate-100 text-slate-600" },
   uploading: { label: "Uploading", className: "bg-accent-500/10 text-accent-500" },
   finalizing: { label: "Processing", className: "bg-accent-500/10 text-accent-500" },
+  paused: { label: "Paused", className: "bg-amber-100 text-amber-700" },
   published: { label: "Published", className: "bg-emerald-100 text-emerald-700" },
   private: { label: "Private", className: "bg-slate-100 text-slate-600" },
   failed: { label: "Failed", className: "bg-red-50 text-danger-600" },
   rejected: { label: "Rejected", className: "bg-red-50 text-danger-600" },
 };
+
+// Thrown when an in-flight transfer is aborted because the network dropped, so
+// runUpload leaves the row "paused" (to resume later) rather than "failed".
+class PausedError extends Error {}
 
 /**
  * The ETA string for a row, or "" when it should be withheld: only while
@@ -71,9 +79,11 @@ function putWithProgress(
   url: string,
   file: File,
   onProgress: (sent: number) => void,
+  onXhr: (xhr: XMLHttpRequest) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    onXhr(xhr);
     xhr.open("PUT", url);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded);
@@ -83,6 +93,7 @@ function putWithProgress(
         ? resolve()
         : reject(new Error(`Upload failed (${xhr.status})`));
     xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.onabort = () => reject(new PausedError());
     xhr.send(file);
   });
 }
@@ -92,10 +103,15 @@ export function UploadCenter() {
   const [items, setItems] = useState<Item[]>([]);
   const [dragging, setDragging] = useState(false);
   const [announcement, setAnnouncement] = useState("");
+  // Online status (starts optimistic so SSR doesn't touch `navigator`; corrected
+  // on mount and via online/offline events).
+  const [online, setOnline] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   // Ids that have already announced their half-way point, so the live region
   // reports each milestone once rather than on every progress event (AC-14).
   const halfAnnounced = useRef<Set<string>>(new Set());
+  // In-flight transfer XHRs, so we can abort them when the network drops.
+  const xhrs = useRef<Map<string, XMLHttpRequest>>(new Map());
 
   const update = useCallback((id: string, patch: Partial<Item>) => {
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
@@ -147,38 +163,47 @@ export function UploadCenter() {
 
         update(item.id, { status: "uploading", startedAt: Date.now() });
         setAnnouncement(`Uploading ${item.file.name}`);
-        await putWithProgress(url, item.file, (sent) => {
-          // Update bytes and fold the new sample into the EMA throughput.
-          setItems((prev) =>
-            prev.map((it) => {
-              if (it.id !== item.id) return it;
-              const now = Date.now();
-              let rate = it.rate;
-              if (it.lastSampleT != null) {
-                const dt = (now - it.lastSampleT) / 1000;
-                if (dt > 0) {
-                  const inst = (sent - (it.lastSampleSent ?? 0)) / dt;
-                  rate = it.rate != null ? it.rate * 0.6 + inst * 0.4 : inst;
-                }
+        try {
+          await putWithProgress(
+            url,
+            item.file,
+            (sent) => {
+              // Update bytes and fold the new sample into the EMA throughput.
+              setItems((prev) =>
+                prev.map((it) => {
+                  if (it.id !== item.id) return it;
+                  const now = Date.now();
+                  let rate = it.rate;
+                  if (it.lastSampleT != null) {
+                    const dt = (now - it.lastSampleT) / 1000;
+                    if (dt > 0) {
+                      const inst = (sent - (it.lastSampleSent ?? 0)) / dt;
+                      rate = it.rate != null ? it.rate * 0.6 + inst * 0.4 : inst;
+                    }
+                  }
+                  return {
+                    ...it,
+                    bytesSent: sent,
+                    rate,
+                    lastSampleT: now,
+                    lastSampleSent: sent,
+                  };
+                }),
+              );
+              if (
+                item.total > 0 &&
+                sent / item.total >= 0.5 &&
+                !halfAnnounced.current.has(item.id)
+              ) {
+                halfAnnounced.current.add(item.id);
+                setAnnouncement(`${item.file.name} halfway uploaded`);
               }
-              return {
-                ...it,
-                bytesSent: sent,
-                rate,
-                lastSampleT: now,
-                lastSampleSent: sent,
-              };
-            }),
+            },
+            (xhr) => xhrs.current.set(item.id, xhr),
           );
-          if (
-            item.total > 0 &&
-            sent / item.total >= 0.5 &&
-            !halfAnnounced.current.has(item.id)
-          ) {
-            halfAnnounced.current.add(item.id);
-            setAnnouncement(`${item.file.name} halfway uploaded`);
-          }
-        });
+        } finally {
+          xhrs.current.delete(item.id);
+        }
 
         update(item.id, { status: "finalizing", bytesSent: item.total });
         const fin = await fetch("/api/uploads/finalize", {
@@ -214,6 +239,20 @@ export function UploadCenter() {
         // Recent Activity, and the file list without a page reload (AC-10).
         refresh();
       } catch (e) {
+        // Aborted for offline — the row is already "paused" and resumes when the
+        // connection returns. A non-abort error that happens while offline is
+        // treated as a pause too, not a hard failure (AC-13).
+        if (e instanceof PausedError) return;
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          update(item.id, {
+            status: "paused",
+            bytesSent: 0,
+            rate: undefined,
+            lastSampleT: undefined,
+            lastSampleSent: undefined,
+          });
+          return;
+        }
         update(item.id, {
           status: "failed",
           error: e instanceof Error ? e.message : "Upload failed.",
@@ -225,8 +264,10 @@ export function UploadCenter() {
     [update, refresh],
   );
 
-  // Scheduler: keep at most MAX_CONCURRENT uploads in flight.
+  // Scheduler: keep at most MAX_CONCURRENT uploads in flight — but never promote
+  // while offline (AC-13); queued/paused rows simply wait.
   useEffect(() => {
+    if (!online) return;
     const running = items.filter((i) => ACTIVE.includes(i.status)).length;
     const slots = MAX_CONCURRENT - running;
     if (slots <= 0) return;
@@ -235,7 +276,63 @@ export function UploadCenter() {
       update(item.id, { status: "requesting" });
       void runUpload(item);
     }
-  }, [items, runUpload, update]);
+  }, [items, online, runUpload, update]);
+
+  // Network drop → abort in-flight transfers and mark active rows "paused"; they
+  // resume automatically when the connection returns (AC-13).
+  const pauseAll = useCallback(() => {
+    for (const xhr of xhrs.current.values()) xhr.abort();
+    setItems((prev) =>
+      prev.map((it) =>
+        it.status === "requesting" || it.status === "uploading"
+          ? {
+              ...it,
+              status: "paused",
+              bytesSent: 0,
+              rate: undefined,
+              lastSampleT: undefined,
+              lastSampleSent: undefined,
+            }
+          : it,
+      ),
+    );
+  }, []);
+
+  const resumeAll = useCallback(() => {
+    setItems((prev) =>
+      prev.map((it) => (it.status === "paused" ? { ...it, status: "queued" } : it)),
+    );
+  }, []);
+
+  useEffect(() => {
+    setOnline(navigator.onLine);
+    const goOnline = () => {
+      setOnline(true);
+      resumeAll();
+    };
+    const goOffline = () => {
+      setOnline(false);
+      pauseAll();
+    };
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, [pauseAll, resumeAll]);
+
+  // Warn before leaving the page while any upload is unfinished (AC-13).
+  const hasUnfinished = items.some((i) => UNFINISHED.includes(i.status));
+  useEffect(() => {
+    if (!hasUnfinished) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [hasUnfinished]);
 
   function retry(id: string) {
     halfAnnounced.current.delete(id);
@@ -306,6 +403,17 @@ export function UploadCenter() {
           }}
         />
       </div>
+
+      {/* Offline notice (AC-13). */}
+      {!online && (
+        <div
+          role="status"
+          className="mt-4 rounded-[--radius-panel] border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800"
+        >
+          You&apos;re offline — uploads are paused and will resume automatically
+          when your connection returns.
+        </div>
+      )}
 
       {/* Upload list — a semantic table at lg+, stacked cards below (AC-5, AC-15). */}
       <div className="mt-6 rounded-[--radius-panel] border border-border bg-surface">
