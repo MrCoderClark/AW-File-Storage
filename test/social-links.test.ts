@@ -6,9 +6,11 @@ import { organization } from "../src/server/db/auth-schema";
 import { orgSocialLinks } from "../src/server/db/schema";
 import {
   deleteSocialLink,
+  getStateLogoUrl,
   listSocialLinks,
   resolveSocials,
   seedDefaultsFromBrand,
+  setStateLogoUrl,
   upsertSocialLink,
 } from "../src/server/social-links";
 
@@ -127,5 +129,43 @@ describe("social-links service (spec 0009 follow-up)", () => {
 
     const second = await seedDefaultsFromBrand(ENV, ORG);
     expect(second).toBe(0); // nothing re-inserted
+  });
+
+  describe("per-state logo (DB parts)", () => {
+    it("sets and resolves a state's logo (name or abbreviation)", async () => {
+      await setStateLogoUrl(ENV, ORG, "California", "https://cdn/ca.png?v=1");
+      expect(await getStateLogoUrl(ENV, ORG, "CA")).toBe("https://cdn/ca.png?v=1");
+    });
+
+    it("resolves precedence: exact state → '*' → null", async () => {
+      expect(await getStateLogoUrl(ENV, ORG, "CA")).toBeNull();
+      await setStateLogoUrl(ENV, ORG, "*", "https://cdn/default.png");
+      expect(await getStateLogoUrl(ENV, ORG, "TX")).toBe("https://cdn/default.png");
+      await setStateLogoUrl(ENV, ORG, "TX", "https://cdn/tx.png");
+      expect(await getStateLogoUrl(ENV, ORG, "TX")).toBe("https://cdn/tx.png");
+      expect(await getStateLogoUrl(ENV, ORG, "OH")).toBe("https://cdn/default.png");
+    });
+
+    it("clearing the logo keeps the row's socials", async () => {
+      await upsertSocialLink(ENV, ORG, { state: "CA", facebook: "https://fb/ca" });
+      await setStateLogoUrl(ENV, ORG, "CA", "https://cdn/ca.png");
+      await setStateLogoUrl(ENV, ORG, "CA", null);
+      const [row] = await listSocialLinks(ENV, ORG);
+      expect(row.logoUrl).toBeNull();
+      expect(row.facebook).toBe("https://fb/ca");
+    });
+
+    it("adding a logo doesn't disturb socials on the same row", async () => {
+      await upsertSocialLink(ENV, ORG, {
+        state: "CA",
+        facebook: "https://fb/ca",
+        instagram: "https://ig/ca",
+      });
+      await setStateLogoUrl(ENV, ORG, "CA", "https://cdn/ca.png");
+      const [row] = await listSocialLinks(ENV, ORG);
+      expect(row.facebook).toBe("https://fb/ca");
+      expect(row.instagram).toBe("https://ig/ca");
+      expect(row.logoUrl).toBe("https://cdn/ca.png");
+    });
   });
 });

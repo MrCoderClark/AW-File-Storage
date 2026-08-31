@@ -177,6 +177,9 @@ export const orgSocialLinks = sqliteTable(
     facebook: text("facebook"),
     x: text("x"),
     instagram: text("instagram"),
+    // Absolute URL of an uploaded per-state logo in the R2 public bucket; null
+    // falls back to the built-in logosByState in signature-brand.ts.
+    logoUrl: text("logo_url"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -1,0 +1,1 @@
+ALTER TABLE `org_social_link` ADD `logo_url` text;

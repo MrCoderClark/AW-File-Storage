@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { US_STATE_OPTIONS } from "@/lib/signature-brand";
 
@@ -15,6 +15,7 @@ interface Row {
   facebook: string | null;
   x: string | null;
   instagram: string | null;
+  logoUrl: string | null;
   updatedAt: string;
 }
 
@@ -190,7 +191,7 @@ export function RegionalSocialLinksSection() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-sm">
+            <table className="w-full min-w-[720px] text-left text-sm">
               <thead>
                 <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-500">
                   <th scope="col" className="py-2 pr-3 font-medium">State</th>
@@ -203,6 +204,7 @@ export function RegionalSocialLinksSection() {
                   <th scope="col" className="px-3 py-2 font-medium">
                     <PlatformLabel platform="instagram" label="Instagram" />
                   </th>
+                  <th scope="col" className="px-3 py-2 font-medium">Logo</th>
                   <th scope="col" className="py-2 pl-3 font-medium">
                     <span className="sr-only">Actions</span>
                   </th>
@@ -217,6 +219,11 @@ export function RegionalSocialLinksSection() {
                     <Cell url={r.facebook} />
                     <Cell url={r.x} />
                     <Cell url={r.instagram} />
+                    <LogoCell
+                      state={r.state}
+                      logoUrl={r.logoUrl}
+                      onChanged={load}
+                    />
                     <td className="py-2.5 pl-3 whitespace-nowrap text-right">
                       <button
                         type="button"
@@ -363,6 +370,106 @@ function PlatformLabel({ platform, label }: { platform: Platform; label: string 
       <PlatformIcon platform={platform} />
       {label}
     </span>
+  );
+}
+
+// Per-state logo: thumbnail + upload/replace/remove. Uploads a PNG/JPEG to the
+// R2 public bucket via the API and reloads. Falls back to the built-in logo when
+// empty (so "—" here still means the built-in state logo prints).
+function LogoCell({
+  state,
+  logoUrl,
+  onChanged,
+}: {
+  state: string;
+  logoUrl: string | null;
+  onChanged: () => void | Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  async function upload(file: File) {
+    setBusy(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("logo", file);
+      const res = await fetch(
+        `/api/social-links/${encodeURIComponent(state)}/logo`,
+        { method: "POST", body: fd },
+      );
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? "Upload failed.");
+      }
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await fetch(`/api/social-links/${encodeURIComponent(state)}/logo`, {
+        method: "DELETE",
+      });
+      await onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <td className="px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        {logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={logoUrl}
+            alt=""
+            className="h-8 w-auto max-w-[72px] rounded border border-border bg-white object-contain"
+          />
+        ) : (
+          <span className="text-xs text-muted-500">—</span>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => inputRef.current?.click()}
+          className="rounded border border-border px-2 py-1 text-xs font-medium hover:bg-canvas disabled:opacity-50"
+        >
+          {busy ? "…" : logoUrl ? "Replace" : "Upload"}
+        </button>
+        {logoUrl && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void remove()}
+            aria-label="Remove logo"
+            className="rounded border border-red-200 px-2 py-1 text-xs font-medium text-danger-600 hover:bg-red-50 disabled:opacity-50"
+          >
+            ×
+          </button>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void upload(f);
+            e.target.value = "";
+          }}
+        />
+      </div>
+      {error && <p className="mt-1 text-xs text-danger-600">{error}</p>}
+    </td>
   );
 }
 
