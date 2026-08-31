@@ -141,6 +141,16 @@ const US_STATES: Record<string, string> = {
   "puerto rico": "PR",
 };
 
+/** US states/territories as `{ abbr, name }`, sorted by name — for a picker UI. */
+export const US_STATE_OPTIONS: { abbr: string; name: string }[] = Object.entries(
+  US_STATES,
+)
+  .map(([name, abbr]) => ({
+    abbr,
+    name: name.replace(/\b\w/g, (c) => c.toUpperCase()),
+  }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
 /**
  * Normalise a vCard state value to its 2-letter abbreviation, or "" if it can't
  * be resolved. Accepts either the abbreviation ("ny", "NY") or the full name

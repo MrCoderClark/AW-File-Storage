@@ -6,6 +6,7 @@ import { AW_SIGNATURE_BRAND } from "@/lib/signature-brand";
 import { buildSignatureHtml } from "@/lib/signature-html";
 import { getCardForSignature } from "@/server/signature";
 import { getActor } from "@/server/session";
+import { resolveSocials, type SocialLinksEnv } from "@/server/social-links";
 import type { UploadEnv } from "@/server/uploads";
 
 // Printable / copyable signature for a published vCard (spec 0009). Lives inside
@@ -37,12 +38,20 @@ export default async function SignaturePage({
   const host = (await headers()).get("host");
   const base = (appUrl ?? (host ? `https://${host}` : "")).replace(/\/+$/, "");
 
+  // Per-state social links from the org's settings, with the built-in fallback.
+  const socials = await resolveSocials(
+    env as unknown as SocialLinksEnv,
+    actor.orgId,
+    resolved.card.address.state,
+  );
+
   const brand = AW_SIGNATURE_BRAND;
   const input = {
     card: resolved.card,
     publicUrl: resolved.publicUrl,
     qrUrl: `${base}/api/cards/${resolved.id}/qr`,
     baseUrl: base,
+    socials,
     brand,
   };
 

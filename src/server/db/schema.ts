@@ -161,6 +161,28 @@ export const auditEvents = sqliteTable(
   ],
 );
 
+// Per-state social links for the org's printable signatures (spec 0009 follow-up).
+// One row per (org, state); the signature generator resolves a card's state to
+// this row, falling back to the built-in defaults in signature-brand.ts. Managed
+// from Settings by owners/admins. URLs are nullable so a state can set only some.
+export const orgSocialLinks = sqliteTable(
+  "org_social_link",
+  {
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // 2-letter US state abbreviation (e.g. "NY", "CA"); "*" is the org-wide default.
+    state: text("state").notNull(),
+    facebook: text("facebook"),
+    x: text("x"),
+    instagram: text("instagram"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("org_social_link_org_state_uq").on(t.orgId, t.state)],
+);
+
 // Drives the per-account lockout in spec 0001 (AC-7). Keyed by user id.
 export const accountLock = sqliteTable("account_lock", {
   userId: text("user_id")
