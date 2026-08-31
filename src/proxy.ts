@@ -6,19 +6,16 @@ import { type NextRequest, NextResponse } from "next/server";
 //
 // Next 16 renamed the "middleware" convention to "proxy" (same functionality).
 //
-// State-changing requests must carry an `Origin` that matches the request host.
-// Same-origin browser POSTs always send Origin, so this rejects cross-site
-// forgeries without affecting legitimate use.
+// State-changing requests must carry an `Origin` that matches the request host —
+// browsers send it on same-origin POSTs, and our bearer-authenticated machine
+// callers (the cron worker, the admin bootstrap) send `Origin: <APP_URL>`
+// explicitly, so the check is uniform with no path-based exemption. (An earlier
+// `/api/cron/`+`/api/admin/` skip was dead code — it never fired on the
+// Cloudflare runtime — so it was removed.)
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export function proxy(req: NextRequest) {
   if (!MUTATING.has(req.method)) return NextResponse.next();
-
-  // Bearer-authenticated machine endpoints (no cookies) are not CSRF-exposed.
-  const path = req.nextUrl.pathname;
-  if (path.startsWith("/api/cron/") || path.startsWith("/api/admin/")) {
-    return NextResponse.next();
-  }
 
   const origin = req.headers.get("origin");
   // HTTP/2/3 carries the host as the `:authority` pseudo-header, and a proxy in
