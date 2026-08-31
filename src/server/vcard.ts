@@ -185,6 +185,9 @@ export function formatPhoneDisplay(raw: string): string {
   if (!trimmed) return "";
   const [num, , ext] = trimmed.split(",");
   const digits = num.replace(/\D/g, "");
+  // No digits at all → not a real number (e.g. an empty Excel cell exported as
+  // "nan", or "N/A"). Treat as absent so the caller drops the line entirely.
+  if (digits.length === 0) return "";
   let base = num.trim();
   if (digits.length === 11 && digits[0] === "1") {
     base = `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
