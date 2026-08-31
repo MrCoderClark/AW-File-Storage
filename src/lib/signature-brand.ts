@@ -19,8 +19,10 @@ export interface Socials {
 export interface SignatureBrand {
   /** Company display name (shown under the logo). */
   companyName: string;
-  /** Public path to the logo served by the app (used as an absolute URL in email). */
+  /** Default logo path (used when the card's state has no state-specific logo). */
   logoPath: string;
+  /** Per-state logo overrides, keyed by 2-letter abbrev; falls back to logoPath. */
+  logosByState: Record<string, string>;
   /** Primary marketing site. */
   websiteUrl: string;
   websiteLabel: string;
@@ -54,6 +56,16 @@ export interface SignatureBrand {
 export const AW_SIGNATURE_BRAND: SignatureBrand = {
   companyName: "America Works of New York, Inc.",
   logoPath: "/aw-logo.png",
+  // NY is the current default logo (/aw-logo.png reads "of New York"). Other
+  // states point at their own logo under public/logos/. Add a state by dropping
+  // its image in public/logos/ and adding a row here.
+  logosByState: {
+    NY: "/aw-logo.png",
+    CA: "/logos/ca.png",
+    MD: "/logos/md.png",
+    DC: "/logos/dc.png",
+    WI: "/logos/wi.png",
+  },
   // TODO(engineer): replace the four placeholder URLs below with the real links.
   websiteUrl: "https://www.americaworks.com",
   websiteLabel: "americaworks.com",
@@ -168,4 +180,10 @@ export function normalizeState(state: string): string {
 export function socialsForState(brand: SignatureBrand, state: string): Socials {
   const abbr = normalizeState(state);
   return (abbr && brand.socialsByState[abbr]) || brand.socials;
+}
+
+/** The logo path for a card's state, falling back to the default logo. */
+export function logoForState(brand: SignatureBrand, state: string): string {
+  const abbr = normalizeState(state);
+  return (abbr && brand.logosByState[abbr]) || brand.logoPath;
 }
