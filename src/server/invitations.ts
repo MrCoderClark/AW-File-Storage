@@ -416,28 +416,37 @@ export async function acceptInvite(opts: {
     )
     .limit(1);
   const memberId = alreadyMember?.id ?? uuidv7();
-  if (!alreadyMember) {
-    await db.insert(schema.member).values({
-      id: memberId,
-      organizationId: inv.organizationId,
-      userId,
-      role: inv.role ?? "member",
-      createdAt: new Date(),
-    });
-  }
-  await db
+
+  // Commit the access-control change atomically (D1 `batch` = one implicit
+  // transaction): the membership, the consumed invitation, and the audit row
+  // (AC-12) land together or not at all — no window where a member exists but the
+  // invitation still reads "pending", or the invitation is consumed with no audit
+  // trail. (Better Auth's user creation above is its own writes and can't join
+  // this batch, so it stays separate; the re-onboard guards keep a retry idempotent.)
+  const invUpdate = db
     .update(schema.invitation)
     .set({ status: "accepted" })
     .where(eq(schema.invitation.id, invitationId));
-
-  // AC-12: the join is an access-control change and must be audited.
-  await db.insert(schema.auditEvents).values({
+  const auditInsert = db.insert(schema.auditEvents).values({
     orgId: inv.organizationId,
     actorUserId: userId,
     action: "member.joined",
     targetType: "member",
     targetId: memberId,
   });
+
+  if (alreadyMember) {
+    await db.batch([invUpdate, auditInsert]);
+  } else {
+    const memberInsert = db.insert(schema.member).values({
+      id: memberId,
+      organizationId: inv.organizationId,
+      userId,
+      role: inv.role ?? "member",
+      createdAt: new Date(),
+    });
+    await db.batch([memberInsert, invUpdate, auditInsert]);
+  }
 
   return { email: inv.email, orgId: inv.organizationId };
 }
