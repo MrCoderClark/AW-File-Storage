@@ -31,17 +31,19 @@ export default async function AppLayout({
   return (
     <AppDataProvider initialRail={rail}>
       <div className="flex min-h-screen flex-col">
-        <AppHeader
-          userName={shell.userName}
-          userEmail={shell.userEmail}
-          orgName={shell.orgName}
-          role={shell.role}
-          activeOrgId={shell.activeOrgId}
-          orgs={shell.orgs}
-        />
-        <AppNav />
+        <div className="print:hidden">
+          <AppHeader
+            userName={shell.userName}
+            userEmail={shell.userEmail}
+            orgName={shell.orgName}
+            role={shell.role}
+            activeOrgId={shell.activeOrgId}
+            orgs={shell.orgs}
+          />
+          <AppNav />
+        </div>
         <AppShellBody rail={<SideRail />}>{children}</AppShellBody>
-        <footer className="flex items-center justify-between border-t border-border bg-surface px-6 py-3 text-xs text-muted-500">
+        <footer className="flex items-center justify-between border-t border-border bg-surface px-6 py-3 text-xs text-muted-500 print:hidden">
           <span>© {new Date().getFullYear()} {appName}. All rights reserved.</span>
           <span className="flex gap-4">
             <a href="#" className="hover:text-slate-700">Privacy</a>
