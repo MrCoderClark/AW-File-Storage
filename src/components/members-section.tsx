@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { timeAgo } from "@/lib/format";
 
 interface MemberRow {
@@ -166,9 +168,31 @@ function MemberRowView({
   onChanged: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [confirmSuspend, setConfirmSuspend] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(
+    null,
+  );
+  const [dialog, setDialog] = useState<null | "suspend" | "remove">(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  // Position a portalled menu at the button, and close it on scroll/resize so it
+  // never floats out of place (matches the Files view actions menu).
+  const openMenu = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    setMenuOpen(true);
+  };
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = () => setMenuOpen(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [menuOpen]);
 
   async function setStatus(status: "active" | "suspended") {
     setBusy(true);
@@ -186,7 +210,9 @@ function MemberRowView({
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not update the member.");
+    } finally {
       setBusy(false);
+      setDialog(null);
     }
   }
 
@@ -207,6 +233,7 @@ function MemberRowView({
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not change the role.");
+    } finally {
       setBusy(false);
     }
   }
@@ -223,7 +250,9 @@ function MemberRowView({
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not remove the member.");
+    } finally {
       setBusy(false);
+      setDialog(null);
     }
   }
 
@@ -261,96 +290,164 @@ function MemberRowView({
             <option value="member">Member</option>
           </select>
         )}
-        {error && <p className="mt-1 max-w-[12rem] text-xs text-danger-600">{error}</p>}
       </td>
       <td className="px-4 py-3">
         <StatusBadge status={member.status} />
       </td>
       <td className="px-4 py-3 text-muted-500">{timeAgo(member.joinedAt)}</td>
       <td className="px-4 py-3">
-        <div className="flex items-center justify-end gap-1.5">
-          <Link
-            href={`/settings/users/${member.id}`}
-            className="rounded-[--radius-panel] border border-border px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500"
+        <div className="flex justify-end">
+          <button
+            ref={btnRef}
+            type="button"
+            aria-label={`Actions for ${member.name}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}
+            className="rounded-[--radius-panel] border border-border px-2 py-1 text-slate-600 hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500"
           >
-            View
-          </Link>
-          {!isSelf &&
-            member.status === "suspended" &&
-            !confirmRemove && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void setStatus("active")}
-                className="rounded-[--radius-panel] border border-border px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-canvas disabled:opacity-50"
-              >
-                Reactivate
-              </button>
-            )}
-          {!isSelf &&
-            member.status === "active" &&
-            !confirmRemove &&
-            (confirmSuspend ? (
-              <>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void setStatus("suspended")}
-                  className="rounded-[--radius-panel] border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                >
-                  Confirm suspend
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setConfirmSuspend(false)}
-                  className="rounded-[--radius-panel] border border-border px-2.5 py-1 text-xs font-medium hover:bg-canvas"
-                >
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setConfirmSuspend(true)}
-                className="rounded-[--radius-panel] border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
-              >
-                Suspend
-              </button>
-            ))}
-          {!isSelf &&
-            !confirmSuspend &&
-            (confirmRemove ? (
-              <>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void remove()}
-                  className="rounded-[--radius-panel] border border-red-200 px-2.5 py-1 text-xs font-medium text-danger-600 hover:bg-red-50 disabled:opacity-50"
-                >
-                  Confirm
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setConfirmRemove(false)}
-                  className="rounded-[--radius-panel] border border-border px-2.5 py-1 text-xs font-medium hover:bg-canvas"
-                >
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setConfirmRemove(true)}
-                className="rounded-[--radius-panel] border border-red-200 px-2.5 py-1 text-xs font-medium text-danger-600 hover:bg-red-50"
-              >
-                Remove
-              </button>
-            ))}
+            <DotsIcon className="h-4 w-4" />
+          </button>
         </div>
+        {error && (
+          <p className="mt-1 max-w-[14rem] text-right text-xs text-danger-600">
+            {error}
+          </p>
+        )}
+
+        {menuOpen &&
+          menuPos &&
+          createPortal(
+            <>
+              <button
+                type="button"
+                aria-hidden
+                tabIndex={-1}
+                onClick={() => setMenuOpen(false)}
+                className="fixed inset-0 z-40 cursor-default"
+              />
+              <div
+                role="menu"
+                style={{ top: menuPos.top, right: menuPos.right }}
+                className="fixed z-50 w-44 overflow-hidden rounded-[--radius-panel] border border-border bg-surface py-1 text-left shadow-lg"
+              >
+                <MenuLink
+                  href={`/settings/users/${member.id}`}
+                  onSelect={() => setMenuOpen(false)}
+                >
+                  View details
+                </MenuLink>
+                {!isSelf && member.status === "suspended" && (
+                  <MenuItem
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void setStatus("active");
+                    }}
+                  >
+                    Reactivate
+                  </MenuItem>
+                )}
+                {!isSelf && member.status === "active" && (
+                  <MenuItem
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setDialog("suspend");
+                    }}
+                  >
+                    Suspend
+                  </MenuItem>
+                )}
+                {!isSelf && (
+                  <MenuItem
+                    danger
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setDialog("remove");
+                    }}
+                  >
+                    Remove
+                  </MenuItem>
+                )}
+              </div>
+            </>,
+            document.body,
+          )}
+
+        <ConfirmDialog
+          open={dialog === "suspend"}
+          title={`Suspend ${member.name}?`}
+          body="They're signed out immediately and can't sign in until reactivated. Their files and any published cards are untouched."
+          confirmLabel="Suspend"
+          busy={busy}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => void setStatus("suspended")}
+        />
+        <ConfirmDialog
+          open={dialog === "remove"}
+          title={`Remove ${member.name}?`}
+          body="This removes their membership in this organization. Their uploaded files and any published cards stay live; they'd need a new invitation to return."
+          confirmLabel="Remove"
+          danger
+          busy={busy}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => void remove()}
+        />
       </td>
     </tr>
+  );
+}
+
+function MenuItem({
+  children,
+  onClick,
+  danger,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={`block w-full px-3 py-2 text-left text-sm hover:bg-canvas ${
+        danger ? "text-danger-600" : "text-slate-700"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MenuLink({
+  href,
+  onSelect,
+  children,
+}: {
+  href: string;
+  onSelect: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      role="menuitem"
+      onClick={onSelect}
+      className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-canvas"
+    >
+      {children}
+    </Link>
+  );
+}
+
+function DotsIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
+    </svg>
   );
 }
 
