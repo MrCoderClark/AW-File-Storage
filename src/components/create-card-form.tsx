@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useAppData } from "@/components/app-data";
 import { buildVcard, type CardFields, cardFileName } from "@/lib/vcard-builder";
@@ -44,6 +45,7 @@ export function CreateCardForm() {
   const [stepError, setStepError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [fileId, setFileId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const set =
@@ -125,7 +127,9 @@ export function CreateCardForm() {
     setStep((s) => Math.max(s - 1, 0));
   }
 
-  async function publish(file: File): Promise<string | null> {
+  async function publish(
+    file: File,
+  ): Promise<{ publicUrl: string | null; fileId: string | null }> {
     const res = await fetch("/api/uploads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -154,8 +158,11 @@ export function CreateCardForm() {
       const body = (await fin.json().catch(() => ({}))) as { error?: string };
       throw new Error(body.error ?? "Publishing failed.");
     }
-    const result = (await fin.json()) as { publicUrl?: string };
-    return result.publicUrl ?? null;
+    const result = (await fin.json()) as {
+      publicUrl?: string;
+      fileId?: string;
+    };
+    return { publicUrl: result.publicUrl ?? null, fileId: result.fileId ?? null };
   }
 
   // Form submit only ever ADVANCES a step (covers Enter in a field). Publishing
@@ -170,12 +177,14 @@ export function CreateCardForm() {
     setStatus("publishing");
     setError(null);
     setPublicUrl(null);
+    setFileId(null);
     try {
       const file = new File([buildVcard(f)], cardFileName(f), {
         type: "text/vcard",
       });
-      const url = await publish(file);
+      const { publicUrl: url, fileId: fid } = await publish(file);
       setPublicUrl(url);
+      setFileId(fid);
       setStatus("done");
       refresh();
     } catch (err) {
@@ -205,19 +214,34 @@ export function CreateCardForm() {
             The card was saved and published.
           </p>
         )}
-        <button
-          type="button"
-          onClick={() => {
-            setF(EMPTY);
-            setFullNameTouched(false);
-            setStep(0);
-            setStatus("idle");
-            setPublicUrl(null);
-          }}
-          className="mt-5 rounded-[--radius-panel] bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-800"
-        >
-          Create another
-        </button>
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+          {fileId && (
+            <Link
+              href={`/signature/${fileId}`}
+              className="rounded-[--radius-panel] bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-800"
+            >
+              Create signature
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setF(EMPTY);
+              setFullNameTouched(false);
+              setStep(0);
+              setStatus("idle");
+              setPublicUrl(null);
+              setFileId(null);
+            }}
+            className={`rounded-[--radius-panel] px-5 py-2 text-sm font-semibold ${
+              fileId
+                ? "border border-border text-slate-700 hover:bg-canvas"
+                : "bg-brand-600 text-white hover:bg-brand-800"
+            }`}
+          >
+            Create another
+          </button>
+        </div>
       </div>
     );
   }

@@ -459,6 +459,14 @@ function FileRow({
                     {copied ? "Copied" : "Copy link"}
                   </MenuItem>
                 )}
+                {published && file.kind === "vcard" && (
+                  <MenuLink
+                    href={`/signature/${file.id}`}
+                    onSelect={() => setMenuOpen(false)}
+                  >
+                    Signature
+                  </MenuLink>
+                )}
                 {canDownload && (
                   <MenuItem onClick={() => { setMenuOpen(false); void download(); }}>
                     Download
@@ -544,6 +552,29 @@ function MenuItem({
     >
       {children}
     </button>
+  );
+}
+
+// A navigating menu entry (the signature page is a full route, not an in-place
+// action), styled to match MenuItem. Closes the menu on select.
+function MenuLink({
+  href,
+  onSelect,
+  children,
+}: {
+  href: string;
+  onSelect: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      role="menuitem"
+      onClick={onSelect}
+      className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-canvas"
+    >
+      {children}
+    </Link>
   );
 }
 
