@@ -122,12 +122,10 @@ export async function requireOrgRole(role: Role) {
     notFound();
   }
 
-  // AC-11: owner/admin cannot reach an admin surface until 2FA is enrolled.
-  const twoFactorEnabled = (session.user as { twoFactorEnabled?: boolean | null })
-    .twoFactorEnabled;
-  if ((actual === "owner" || actual === "admin") && !twoFactorEnabled) {
-    redirect("/enroll-2fa");
-  }
+  // 2FA is NOT forced on owners/admins as a blanket rule (revised from spec 0001
+  // AC-11 by owner request). Enrolment is only mandated per-member via
+  // `member.twoFactorRequired`, enforced in the (app) layout
+  // (`twoFactorEnrollmentRequired`). Everyone may still enable it voluntarily.
   return { session, role: actual };
 }
 
