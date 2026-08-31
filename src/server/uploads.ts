@@ -228,7 +228,7 @@ export async function finalizeUpload(
   return { fileId: file.id, status: "ready", visibility: "private" };
 }
 
-function publicUrlFor(env: UploadEnv, slug: string | null): string | undefined {
+export function publicUrlFor(env: UploadEnv, slug: string | null): string | undefined {
   if (!slug) return undefined;
   const domain = env.PUBLIC_FILE_DOMAIN ?? "contacts.americaworks.com";
   return `https://${domain}/c/${slug}.vcf`;

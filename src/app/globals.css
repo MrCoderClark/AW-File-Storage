@@ -27,6 +27,32 @@ body {
   font-family: var(--font-sans);
 }
 
+/* When printing (the signature page's Print / Save as PDF), the app chrome is
+   hidden via print:hidden utilities; keep the printed page on a white ground.
+   Zeroing the @page margin drops the browser's own header/footer (page title,
+   URL, date/time) that would otherwise print in the margins; the padding on the
+   body restores a sensible print margin. */
+@media print {
+  @page {
+    margin: 0;
+  }
+  html,
+  body {
+    background-color: #ffffff;
+  }
+  body {
+    padding: 14mm;
+  }
+  /* Browsers drop background colours when printing (the red divider, the blue
+     "Schedule a meeting" button). Force them to print so the signature looks
+     the same on paper as on screen — no reliance on the print dialog's
+     "Background graphics" toggle. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
 /* Honour a reduced-motion preference across the app (spec 0004 AC-18). All our
    motion is opacity/transform/width transitions and the skeleton pulse; this
    neutralises them without changing layout. */
