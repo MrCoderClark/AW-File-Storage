@@ -43,6 +43,13 @@
       "when": 1788030490671,
       "tag": "0005_silent_captain_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788195954430,
+      "tag": "0006_brown_justice",
+      "breakpoints": true
     }
   ]
 }
