@@ -37,9 +37,9 @@ export function AppShellBody({
         />
       )}
 
-      {/* Rail: inline at lg+, off-canvas drawer below lg */}
+      {/* Rail: inline at lg+, off-canvas drawer below lg; hidden when printing */}
       <div
-        className={`fixed inset-y-0 left-0 z-30 transform transition-transform lg:static lg:z-auto lg:transform-none ${
+        className={`fixed inset-y-0 left-0 z-30 transform transition-transform print:hidden lg:static lg:z-auto lg:transform-none ${
           open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
@@ -48,7 +48,7 @@ export function AppShellBody({
 
       {/* Content column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="border-b border-border bg-surface px-4 py-2 lg:hidden">
+        <div className="border-b border-border bg-surface px-4 py-2 lg:hidden print:hidden">
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -59,7 +59,7 @@ export function AppShellBody({
             Panels
           </button>
         </div>
-        <main className="flex-1 bg-canvas px-4 py-6 sm:px-6 sm:py-8">
+        <main className="flex-1 bg-canvas px-4 py-6 sm:px-6 sm:py-8 print:bg-white print:p-0">
           {children}
         </main>
       </div>
