@@ -60,14 +60,6 @@ export function SignatureView({
               {copiedUrl ? "Copied ✓" : "Copy public link"}
             </button>
           </div>
-
-          <p className="mt-3 rounded-[--radius-panel] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Heads up: the website, Employers, Job Seekers, and Schedule-a-meeting
-            links still point at placeholder URLs. Social icons are chosen by the
-            card&apos;s state — New York is wired up; other states fall back to
-            placeholders. All of it lives in one file —{" "}
-            <code>src/lib/signature-brand.ts</code>.
-          </p>
         </div>
 
         {/* The signature itself — the only thing that prints. */}

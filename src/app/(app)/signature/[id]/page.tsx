@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
+import QRCode from "qrcode";
 import { SignatureView } from "@/components/signature-view";
 import { AW_SIGNATURE_BRAND } from "@/lib/signature-brand";
 import { buildSignatureHtml } from "@/lib/signature-html";
@@ -45,11 +46,29 @@ export default async function SignaturePage({
     resolved.card.address.state,
   );
 
+  // Self-contained QR (a data URI), so the printable signature never depends on
+  // a reachable endpoint. PNG, with an SVG data-URI fallback if the runtime
+  // can't produce a PNG.
+  let qrUrl: string;
+  try {
+    qrUrl = await QRCode.toDataURL(resolved.publicUrl, {
+      width: 320,
+      margin: 1,
+      errorCorrectionLevel: "M",
+    });
+  } catch {
+    const svg = await QRCode.toString(resolved.publicUrl, {
+      type: "svg",
+      margin: 1,
+    });
+    qrUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  }
+
   const brand = AW_SIGNATURE_BRAND;
   const input = {
     card: resolved.card,
     publicUrl: resolved.publicUrl,
-    qrUrl: `${base}/api/cards/${resolved.id}/qr`,
+    qrUrl,
     baseUrl: base,
     socials,
     brand,
