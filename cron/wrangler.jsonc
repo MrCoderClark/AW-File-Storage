@@ -3,9 +3,11 @@
 	"name": "aw-file-storage-cron",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-08-01",
+	"observability": { "enabled": true },
 	// Nightly at 03:00 UTC (spec 0003 AC-14).
 	"triggers": { "crons": ["0 3 * * *"] },
-	// APP_URL is the deployed app origin; set CRON_SECRET with
-	// `wrangler secret put CRON_SECRET` (must match the app's CRON_SECRET).
-	"vars": { "APP_URL": "https://aw-file-storage.example.workers.dev" }
+	// APP_URL is the deployed app origin; it is BOTH the request target and the
+	// Origin header sent to satisfy the app's CSRF guard. Set CRON_SECRET with
+	// `wrangler secret put CRON_SECRET` from this dir (must match the app's).
+	"vars": { "APP_URL": "https://www.awvcard.com" }
 }
