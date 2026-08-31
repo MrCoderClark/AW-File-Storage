@@ -92,6 +92,25 @@ describe("social-links service (spec 0009 follow-up)", () => {
     });
   });
 
+  it("adding the org-wide '*' default keeps an existing state row (regression)", async () => {
+    await upsertSocialLink(ENV, ORG, {
+      state: "New York",
+      facebook: "https://fb.com/awny",
+      x: "https://x.com/awny",
+      instagram: "https://ig.com/awny",
+    });
+    await upsertSocialLink(ENV, ORG, {
+      state: "*",
+      facebook: "https://fb.com/awdefault",
+    });
+    const rows = await listSocialLinks(ENV, ORG);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.state === "NY")?.facebook).toBe("https://fb.com/awny");
+    expect(rows.find((r) => r.state === "*")?.facebook).toBe(
+      "https://fb.com/awdefault",
+    );
+  });
+
   it("deletes a state's row", async () => {
     await upsertSocialLink(ENV, ORG, { state: "CA", facebook: "https://fb.com/x" });
     await deleteSocialLink(ENV, ORG, "California");
