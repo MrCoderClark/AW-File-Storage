@@ -96,7 +96,7 @@ download links. Auth, tenancy, uploads, and publishing are all done and verified
 5. ~~**Cron worker deploy**~~ **Done + deployed.** `cron/src/index.ts` sends `Origin: <APP_URL>` (passes the app's CSRF guard); `cron/wrangler.jsonc` `APP_URL` = `https://www.awvcard.com`. `aw-file-storage-cron` deployed with `CRON_SECRET` set and schedule `0 3 * * *` UTC. Verified live: `POST /api/cron/cleanup` (bearer + Origin) → `{"ok":true,"sweptSessions":4}`. (Follow-up done: the dead `/api/cron/` + `/api/admin/` proxy exemption was removed — CSRF is now uniform.)
 6. `X-Robots-Tag: noindex` transform rule on `contacts.awvcard.com` (AC-17) — **documented + ready to apply** (Cloudflare Transform Rule; can't be done in app code since vCards are served straight from R2). Full steps (dashboard + API + verify) in [contacts-noindex.md](contacts-noindex.md); just needs applying at the edge. **Multipart uploads** > 90 MB (deferred).
 7. **Reconcile spec 0005** — record the two accepted deviations (admin password reset; self-service name/email edit) in its follow-up.
-8. **`acceptInvite` atomicity** (D1 batch) refinement.
+8. ~~**`acceptInvite` atomicity** (D1 batch) refinement.~~ **Done** — the access-control trio (membership insert + invitation→accepted + `member.joined` audit) now commits in one `db.batch()` (implicit transaction). Better Auth's user creation stays separate (can't join the batch); the re-onboard guards keep retries idempotent. Tests: `test/invitations.test.ts` (happy path, already-member idempotence, expired-before-write).
 
 ## Testing / running
 
