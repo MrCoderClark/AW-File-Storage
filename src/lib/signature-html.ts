@@ -1,5 +1,5 @@
 import type { ParsedVcard } from "@/server/vcard";
-import { type SignatureBrand, socialsForState } from "./signature-brand";
+import type { SignatureBrand, Socials } from "./signature-brand";
 
 // Build the America Works print/email signature as ONE self-contained HTML
 // fragment (spec 0009), matching the company's Outlook signature: logo + links
@@ -17,6 +17,8 @@ export interface SignatureInput {
   qrUrl: string;
   /** Absolute app origin (no trailing slash) — hosts the logo + social icons. */
   baseUrl: string;
+  /** Resolved social links for this card's state (from the org's settings). */
+  socials: Socials;
   brand: SignatureBrand;
 }
 
@@ -78,8 +80,7 @@ function scheduleButton(brand: SignatureBrand): string {
  * no URL is configured.
  */
 function actionRow(input: SignatureInput): string {
-  const { brand, card, baseUrl } = input;
-  const socials = socialsForState(brand, card.address.state);
+  const { brand, socials, baseUrl } = input;
   const cells = [
     `<td style="padding-right:10px;vertical-align:middle;">${scheduleButton(brand)}</td>`,
   ];
