@@ -1,6 +1,7 @@
 import { InvitationsPanel } from "@/components/invitations-panel";
 import { MembersSection } from "@/components/members-section";
 import { ProfileSection } from "@/components/profile-section";
+import { RegionalSocialLinksSection } from "@/components/regional-social-links-section";
 import { TwoFactorSection } from "@/components/two-factor-section";
 import {
   activeMembershipTwoFactorRequired,
@@ -43,9 +44,10 @@ export default async function SettingsPage() {
         />
 
         {canManage && (
-          <div>
+          <div className="space-y-6">
             <MembersSection currentUserId={actor?.userId ?? ""} />
             <InvitationsPanel />
+            <RegionalSocialLinksSection />
           </div>
         )}
       </div>
