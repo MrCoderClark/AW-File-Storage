@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import QRCode from "qrcode";
 import { SignatureView } from "@/components/signature-view";
-import { AW_SIGNATURE_BRAND } from "@/lib/signature-brand";
+import { AW_SIGNATURE_BRAND, logoForState } from "@/lib/signature-brand";
 import { buildSignatureHtml } from "@/lib/signature-html";
 import { getCardForSignature } from "@/server/signature";
 import { getActor } from "@/server/session";
@@ -71,6 +71,7 @@ export default async function SignaturePage({
     qrUrl,
     baseUrl: base,
     socials,
+    logoPath: logoForState(brand, resolved.card.address.state),
     brand,
   };
 
