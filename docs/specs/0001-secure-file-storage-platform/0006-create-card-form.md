@@ -55,3 +55,12 @@ Today the only way to publish a contact card is to already have a `.vcf` file an
 2. `CreateCardForm` component (fields, validation, a11y).
 3. Wire the Upload Center toggle and the build → enqueue path.
 4. Verify end to end: form → published public URL.
+
+## Follow-up — edit a published card in place (2026-09-01, PR #26)
+
+Create-only left no way to fix a published card's details short of delete + re-create (which mints a new URL). Editing reuses this same form.
+
+- **Entry point:** an **Edit card** action on published vCard rows → `/files/[id]/edit` (RSC), which loads the stored `.vcf` via `getCardForSignature`, maps it back to form fields with `cardFieldsFromParsed` (`vcard-builder.ts`), and renders `CreateCardForm` in **edit mode** (`initial` + `editFileId` props; button = "Save changes").
+- **Server:** `editVcard(env, ctx, fileId, vcardText, newName?)` in `uploads.ts` — re-validates the rebuilt card, overwrites **both** the durable private copy and the public object **at the existing `public_slug`**, refreshes the denormalised `contact_*` search fields, adjusts org storage usage by the size delta, rejects a checksum collision with a *different* live card, and audits `vcard.edited`. `PATCH /api/files/[id]/card`; `canManage` re-checked.
+- **Key invariant — the URL is stable:** an edit never re-derives the slug, so the public `contacts.awvcard.com/c/<slug>.vcf` address (and any printed QR / shared link) keeps resolving. Consequence: the slug can drift from a renamed contact over time; a fresh URL still requires delete + re-create.
+- **No DB migration** (reuses the Phase-10 `contact_*` columns). Tests: `test/vcard-builder.test.ts` proves the `parse → cardFieldsFromParsed → buildVcard → parse` round trip is stable (phones, org, address survive).
