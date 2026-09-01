@@ -64,3 +64,7 @@ The original AC-2/AC-3 client-side approach (load all rows, filter in memory) wa
 - **UI:** `/files/page.tsx` server-renders the first page (default 30 rows); `FilesView` does debounced+abortable search, **Load more**, sortable headers, and syncs `q/category/sort/dir` to the URL. Client-side filtering removed.
 - **Deferred:** SQLite **FTS5** over the same columns (chosen against for now — stays in Drizzle's additive-migration model; revisit past ~10k cards/org). Numbered pagination was rejected — it needs OFFSET, which keyset deliberately avoids; **Next/Prev** (still keyset) is the fallback if the growing DOM from Load more becomes an issue.
 - Tests: `test/files-list.test.ts` (pagination, keyset-vs-offset stability, sorts, search, filters, org-scoping).
+
+### Location search — city & state (migration 0009)
+
+Search was extended to cover **city and state**. A `file.contact_location` column holds a searchable `"City Abbr FullName"` blob (e.g. `"Bronx NY New York"`) built by `buildLocationText` (`signature-brand.ts`), so one `LIKE` matches the city or either state form (`NY` *and* `New York`) — no query-time expansion. Populated at publish/edit; `backfillSearchFields` re-fills rows that predate the column. Added to the `listFilesPage` search `OR`. Additive migration 0009; a prod backfill re-run is needed after deploy.
