@@ -1,0 +1,1 @@
+ALTER TABLE `file` ADD `contact_location` text;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AW_SIGNATURE_BRAND,
+  buildLocationText,
   logoForState,
   normalizeState,
   socialsForState,
@@ -56,5 +57,21 @@ describe("logoForState", () => {
     expect(logoForState(AW_SIGNATURE_BRAND, "")).toBe(
       AW_SIGNATURE_BRAND.logoPath,
     );
+  });
+});
+
+describe("buildLocationText", () => {
+  it("combines city + abbreviation + full state name (so all three are searchable)", () => {
+    expect(buildLocationText("Bronx", "NY")).toBe("Bronx NY New York");
+    // Full state name in, same result.
+    expect(buildLocationText("Bronx", "New York")).toBe("Bronx NY New York");
+  });
+  it("dedupes when the city equals the state name", () => {
+    expect(buildLocationText("New York", "NY")).toBe("New York NY");
+  });
+  it("handles missing city or unresolvable state", () => {
+    expect(buildLocationText("", "CA")).toBe("CA California");
+    expect(buildLocationText("Austin", "")).toBe("Austin");
+    expect(buildLocationText("", "")).toBe("");
   });
 });
