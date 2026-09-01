@@ -4,6 +4,8 @@
 // (VERSION:3.0, single-line fields, FN present) and flows through the normal
 // upload → publish pipeline.
 
+import type { ParsedVcard } from "@/server/vcard";
+
 export interface CardFields {
   firstName: string;
   lastName: string;
@@ -97,6 +99,32 @@ export function buildVcard(f: CardFields): string {
 
   lines.push("END:VCARD");
   return `${lines.join("\r\n")}\r\n`;
+}
+
+/**
+ * Map a parsed stored vCard back into editable form fields (spec 0006 follow-up:
+ * Edit Card). The inverse of `buildVcard` for the round-trip: parseVcard →
+ * cardFieldsFromParsed → edit → buildVcard. Phone numbers come back display-
+ * formatted; `parsePhone` re-normalises them on the way out.
+ */
+export function cardFieldsFromParsed(card: ParsedVcard): CardFields {
+  return {
+    firstName: card.firstName,
+    lastName: card.lastName,
+    fullName: card.fullName,
+    email: card.email,
+    mobilePhone: card.mobilePhone,
+    workPhone: card.workPhone,
+    fax: card.fax,
+    organization: card.organization,
+    jobTitle: card.title,
+    street: card.address.street,
+    city: card.address.city,
+    state: card.address.state,
+    zip: card.address.zip,
+    country: card.address.country,
+    website: card.website,
+  };
 }
 
 /** A safe `.vcf` filename from the contact's name. */

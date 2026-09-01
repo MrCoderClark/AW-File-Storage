@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { deriveSlug, validateVcard } from "../src/server/vcard";
+import { deriveSlug, parseVcard, validateVcard } from "../src/server/vcard";
 import {
   buildVcard,
   type CardFields,
+  cardFieldsFromParsed,
   cardFileName,
   escapeVcard,
   parsePhone,
@@ -126,5 +127,51 @@ describe("cardFileName", () => {
     expect(cardFileName({ ...minimal, firstName: "Jo/e", lastName: "O'Neil" })).toBe(
       "Jo_e_O_Neil.vcf",
     );
+  });
+});
+
+// The Edit-Card round trip (spec 0006 follow-up): a stored card must map back to
+// editable fields and rebuild without drifting — otherwise editing would mangle
+// data the user didn't touch.
+describe("cardFieldsFromParsed round-trip", () => {
+  const full: CardFields = {
+    ...minimal,
+    fullName: "Jane Doe",
+    mobilePhone: "(555) 111-2222",
+    organization: "Acme",
+    jobTitle: "Engineer",
+    street: "1 Main St",
+    city: "Town",
+    state: "TX",
+    zip: "75001",
+    country: "USA",
+    website: "https://acme.example",
+    workPhone: "555-333-4444",
+  };
+
+  it("maps a parsed card back to the editable fields", () => {
+    const parsed = parseVcard(buildVcard(full));
+    const fields = cardFieldsFromParsed(parsed);
+    expect(fields.firstName).toBe("Jane");
+    expect(fields.lastName).toBe("Doe");
+    expect(fields.email).toBe("jane@example.com");
+    expect(fields.organization).toBe("Acme");
+    expect(fields.jobTitle).toBe("Engineer");
+    expect(fields.city).toBe("Town");
+    expect(fields.state).toBe("TX");
+    expect(fields.website).toBe("https://acme.example");
+  });
+
+  it("is stable when rebuilt (parse → map → build → parse)", () => {
+    const once = parseVcard(buildVcard(full));
+    const twice = parseVcard(buildVcard(cardFieldsFromParsed(once)));
+    expect(twice.fullName).toBe(once.fullName);
+    expect(twice.organization).toBe(once.organization);
+    expect(twice.title).toBe(once.title);
+    expect(twice.email).toBe(once.email);
+    // Phone survives the display-format → parsePhone round trip.
+    expect(twice.mobilePhone).toBe(once.mobilePhone);
+    expect(twice.workPhone).toBe(once.workPhone);
+    expect(twice.address.formatted).toBe(once.address.formatted);
   });
 });
