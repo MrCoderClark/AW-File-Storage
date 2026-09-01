@@ -5,6 +5,11 @@ import { useState } from "react";
 import { useAppData } from "@/components/app-data";
 import { buildVcard, type CardFields, cardFileName } from "@/lib/vcard-builder";
 
+// The America Works regional entities a card can belong to (Organization field).
+const ORG_OPTIONS = ["AWNY", "AWNJ", "AWDC", "AWMD", "AWCA", "AWWI"] as const;
+// Every card links to the one org-wide site; the field is fixed and read-only.
+const FIXED_WEBSITE = "https://www.americaworks.com";
+
 const EMPTY: CardFields = {
   firstName: "",
   lastName: "",
@@ -20,7 +25,7 @@ const EMPTY: CardFields = {
   state: "",
   zip: "",
   country: "USA",
-  website: "",
+  website: FIXED_WEBSITE,
 };
 
 const STEPS = ["Name & contact", "Work", "Address"] as const;
@@ -49,7 +54,10 @@ export function CreateCardForm({
 } = {}) {
   const { refresh } = useAppData();
   const editing = !!editFileId;
-  const [f, setF] = useState<CardFields>(initial ?? EMPTY);
+  // Website is always the fixed org site, in both create and edit.
+  const [f, setF] = useState<CardFields>(
+    initial ? { ...initial, website: FIXED_WEBSITE } : EMPTY,
+  );
   // Auto-fill Full name from First + Last until the user edits Full name itself.
   // This holds in edit mode too: the pre-filled Full name shows on load, but the
   // moment you change First/Last it re-derives — type in Full name to keep a
@@ -317,11 +325,18 @@ export function CreateCardForm({
 
       {step === 1 && (
         <FieldGrid>
-          <Field label="Organization" value={f.organization ?? ""} onChange={set("organization")} onBlur={capitalize("organization")} />
+          <SelectField
+            label="Organization"
+            value={f.organization ?? ""}
+            onChange={(e) =>
+              setF((prev) => ({ ...prev, organization: e.target.value }))
+            }
+            options={ORG_OPTIONS}
+          />
           <Field label="Job title" value={f.jobTitle ?? ""} onChange={set("jobTitle")} onBlur={capitalize("jobTitle")} />
           <Field label="Work phone" type="tel" value={f.workPhone ?? ""} onChange={set("workPhone")} />
           <Field label="Fax" type="tel" value={f.fax ?? ""} onChange={set("fax")} />
-          <Field label="Website" type="url" value={f.website ?? ""} onChange={set("website")} className="sm:col-span-2" />
+          <Field label="Website" type="url" value={FIXED_WEBSITE} readOnly className="sm:col-span-2" />
         </FieldGrid>
       )}
 
@@ -454,15 +469,17 @@ function Field({
   required = false,
   placeholder,
   className = "",
+  readOnly = false,
 }: {
   label: string;
   value: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onBlur?: () => void;
   type?: string;
   required?: boolean;
   placeholder?: string;
   className?: string;
+  readOnly?: boolean;
 }) {
   return (
     <label className={`flex flex-col gap-1 ${className}`}>
@@ -476,8 +493,51 @@ function Field({
         onChange={onChange}
         onBlur={onBlur}
         placeholder={placeholder}
-        className="rounded-[--radius-panel] border border-border bg-canvas px-3 py-2 text-sm focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/25"
+        readOnly={readOnly}
+        aria-readonly={readOnly || undefined}
+        className={`rounded-[--radius-panel] border border-border px-3 py-2 text-sm ${
+          readOnly
+            ? "cursor-default bg-surface text-muted-500"
+            : "bg-canvas focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/25"
+        }`}
       />
+    </label>
+  );
+}
+
+// A dropdown field matching Field's look. Preserves an existing value that isn't
+// in `options` (e.g. an older card's organization) so editing never silently
+// drops it, and keeps a blank "choose" entry so the field stays optional.
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  options: readonly string[];
+  className?: string;
+}) {
+  const opts =
+    value && !options.includes(value) ? [value, ...options] : [...options];
+  return (
+    <label className={`flex flex-col gap-1 ${className}`}>
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <select
+        value={value}
+        onChange={onChange}
+        className="rounded-[--radius-panel] border border-border bg-canvas px-3 py-2 text-sm focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/25"
+      >
+        <option value="">Choose an organization…</option>
+        {opts.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
