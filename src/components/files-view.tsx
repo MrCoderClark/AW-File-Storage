@@ -251,7 +251,7 @@ export function FilesView({
         </Link>
         <input
           type="search"
-          placeholder="Search name, company, email…"
+          placeholder="Search name, company, city, state…"
           aria-label="Search files"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -440,18 +440,30 @@ function FileRow({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(file.name);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(
-    null,
-  );
+  const [menuPos, setMenuPos] = useState<{
+    top?: number;
+    bottom?: number;
+    right: number;
+  } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [dialog, setDialog] = useState<null | "delete" | "unpublish">(null);
   const [copied, setCopied] = useState(false);
 
   // Position a portalled menu at the button, and close it on scroll/resize so it
-  // never floats out of place.
+  // never floats out of place. Opens upward for rows near the bottom of the
+  // viewport so the (fixed-position) menu is never clipped off-screen.
   const openMenu = () => {
     const r = btnRef.current?.getBoundingClientRect();
-    if (r) setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    if (r) {
+      const right = window.innerWidth - r.right;
+      const spaceBelow = window.innerHeight - r.bottom;
+      const MENU_MAX = 280; // generous upper bound for the tallest menu
+      if (spaceBelow < MENU_MAX && r.top > spaceBelow) {
+        setMenuPos({ bottom: window.innerHeight - r.top + 4, right });
+      } else {
+        setMenuPos({ top: r.bottom + 4, right });
+      }
+    }
     setMenuOpen(true);
   };
   useEffect(() => {
@@ -632,8 +644,13 @@ function FileRow({
               />
               <div
                 role="menu"
-                style={{ top: menuPos.top, right: menuPos.right }}
-                className="fixed z-50 w-44 overflow-hidden rounded-[--radius-panel] border border-border bg-surface py-1 text-left shadow-lg"
+                style={{
+                  top: menuPos.top,
+                  bottom: menuPos.bottom,
+                  right: menuPos.right,
+                  maxHeight: "calc(100vh - 16px)",
+                }}
+                className="fixed z-50 w-44 overflow-y-auto rounded-[--radius-panel] border border-border bg-surface py-1 text-left shadow-lg"
               >
                 {published && file.publicUrl && (
                   <MenuItem onClick={() => { setMenuOpen(false); void copyLink(); }}>

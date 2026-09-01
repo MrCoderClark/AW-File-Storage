@@ -72,6 +72,9 @@ export const files = sqliteTable(
     contactOrg: text("contact_org"),
     contactTitle: text("contact_title"),
     contactEmail: text("contact_email"),
+    // Searchable location blob: "City StateAbbr StateFullName" (e.g.
+    // "Bronx NY New York"), so one search matches city or either state form.
+    contactLocation: text("contact_location"),
     // Persisted coarse type (FileCategory in lib/file-type.ts), so the Files
     // "Filter by type" control is an indexable WHERE rather than a client guess.
     category: text("category"),

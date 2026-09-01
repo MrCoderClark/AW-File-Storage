@@ -64,3 +64,10 @@ Create-only left no way to fix a published card's details short of delete + re-c
 - **Server:** `editVcard(env, ctx, fileId, vcardText, newName?)` in `uploads.ts` — re-validates the rebuilt card, overwrites **both** the durable private copy and the public object **at the existing `public_slug`**, refreshes the denormalised `contact_*` search fields, adjusts org storage usage by the size delta, rejects a checksum collision with a *different* live card, and audits `vcard.edited`. `PATCH /api/files/[id]/card`; `canManage` re-checked.
 - **Key invariant — the URL is stable:** an edit never re-derives the slug, so the public `contacts.awvcard.com/c/<slug>.vcf` address (and any printed QR / shared link) keeps resolving. Consequence: the slug can drift from a renamed contact over time; a fresh URL still requires delete + re-create.
 - **No DB migration** (reuses the Phase-10 `contact_*` columns). Tests: `test/vcard-builder.test.ts` proves the `parse → cardFieldsFromParsed → buildVcard → parse` round trip is stable (phones, org, address survive).
+
+### Constrained fields (2026-09-01, PR #28)
+
+Two fields were locked down to keep cards consistent:
+- **Organization** is a **dropdown** of the AW regional entities (`ORG_OPTIONS` in `create-card-form.tsx`) rather than free text. Editing an older card whose org isn't in the list keeps that value as an extra option (never silently dropped); a blank entry keeps it optional.
+- **Website** is **read-only**, fixed to `https://www.americaworks.com` (`FIXED_WEBSITE`), forced in both create and edit — so editing an existing card also normalises its URL to this value on save.
+- **State** is a **dropdown** (`US_STATE_OPTIONS`) storing the canonical 2-letter abbreviation; an edited card's state is normalised on load so it matches an option. City stays free text (no finite list). This also feeds the per-state signature features (logos/socials) cleaner data.

@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useAppData } from "@/components/app-data";
+import { normalizeState, US_STATE_OPTIONS } from "@/lib/signature-brand";
 import { buildVcard, type CardFields, cardFileName } from "@/lib/vcard-builder";
 
 // The America Works regional entities a card can belong to (Organization field).
-const ORG_OPTIONS = ["AWNY", "AWNJ", "AWDC", "AWMD", "AWCA", "AWWI"] as const;
+const ORG_OPTIONS = ["America Works of New York, Inc", "America Works of New Jersey, Inc", "America Works of Washington D.C, Inc", "America Works of Maryland, Inc", "America Works of California, Inc", "America Works of Wisconsin, Inc"] as const;
 // Every card links to the one org-wide site; the field is fixed and read-only.
 const FIXED_WEBSITE = "https://www.americaworks.com";
 
@@ -54,9 +55,16 @@ export function CreateCardForm({
 } = {}) {
   const { refresh } = useAppData();
   const editing = !!editFileId;
-  // Website is always the fixed org site, in both create and edit.
+  // Website is always the fixed org site; State is normalised to its 2-letter
+  // abbreviation so it matches a dropdown option (both apply in create + edit).
   const [f, setF] = useState<CardFields>(
-    initial ? { ...initial, website: FIXED_WEBSITE } : EMPTY,
+    initial
+      ? {
+          ...initial,
+          website: FIXED_WEBSITE,
+          state: normalizeState(initial.state ?? "") || (initial.state ?? ""),
+        }
+      : EMPTY,
   );
   // Auto-fill Full name from First + Last until the user edits Full name itself.
   // This holds in edit mode too: the pre-filled Full name shows on load, but the
@@ -285,11 +293,10 @@ export function CreateCardForm({
                 setPublicUrl(null);
                 setFileId(null);
               }}
-              className={`rounded-[--radius-panel] px-5 py-2 text-sm font-semibold ${
-                fileId
-                  ? "border border-border text-slate-700 hover:bg-canvas"
-                  : "bg-brand-600 text-white hover:bg-brand-800"
-              }`}
+              className={`rounded-[--radius-panel] px-5 py-2 text-sm font-semibold ${fileId
+                ? "border border-border text-slate-700 hover:bg-canvas"
+                : "bg-brand-600 text-white hover:bg-brand-800"
+                }`}
             >
               Create another
             </button>
@@ -331,7 +338,8 @@ export function CreateCardForm({
             onChange={(e) =>
               setF((prev) => ({ ...prev, organization: e.target.value }))
             }
-            options={ORG_OPTIONS}
+            options={ORG_OPTIONS.map((o) => ({ value: o, label: o }))}
+            placeholder="Choose an organization…"
           />
           <Field label="Job title" value={f.jobTitle ?? ""} onChange={set("jobTitle")} onBlur={capitalize("jobTitle")} />
           <Field label="Work phone" type="tel" value={f.workPhone ?? ""} onChange={set("workPhone")} />
@@ -344,7 +352,18 @@ export function CreateCardForm({
         <FieldGrid>
           <Field label="Street" value={f.street ?? ""} onChange={set("street")} onBlur={capitalize("street")} className="sm:col-span-2" />
           <Field label="City" value={f.city ?? ""} onChange={set("city")} onBlur={capitalize("city")} />
-          <Field label="State" value={f.state ?? ""} onChange={set("state")} />
+          <SelectField
+            label="State"
+            value={f.state ?? ""}
+            onChange={(e) =>
+              setF((prev) => ({ ...prev, state: e.target.value }))
+            }
+            options={US_STATE_OPTIONS.map((s) => ({
+              value: s.abbr,
+              label: s.name,
+            }))}
+            placeholder="Choose a state…"
+          />
           <Field label="Zip" value={f.zip ?? ""} onChange={set("zip")} />
           <Field label="Country" value={f.country ?? ""} onChange={set("country")} onBlur={capitalize("country")} />
         </FieldGrid>
@@ -410,10 +429,10 @@ function Stepper({ current }: { current: number }) {
           <li key={label} className="flex flex-1 items-center gap-2">
             <span
               className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${state === "current"
-                  ? "bg-brand-600 text-white"
-                  : state === "done"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-canvas text-muted-500"
+                ? "bg-brand-600 text-white"
+                : state === "done"
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-canvas text-muted-500"
                 }`}
             >
               {i + 1}
@@ -495,11 +514,10 @@ function Field({
         placeholder={placeholder}
         readOnly={readOnly}
         aria-readonly={readOnly || undefined}
-        className={`rounded-[--radius-panel] border border-border px-3 py-2 text-sm ${
-          readOnly
-            ? "cursor-default bg-surface text-muted-500"
-            : "bg-canvas focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/25"
-        }`}
+        className={`rounded-[--radius-panel] border border-border px-3 py-2 text-sm ${readOnly
+          ? "cursor-default bg-surface text-muted-500"
+          : "bg-canvas focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/25"
+          }`}
       />
     </label>
   );
@@ -513,16 +531,22 @@ function SelectField({
   value,
   onChange,
   options,
+  placeholder,
   className = "",
 }: {
   label: string;
   value: string;
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-  options: readonly string[];
+  options: readonly { value: string; label: string }[];
+  placeholder: string;
   className?: string;
 }) {
+  // Preserve an off-list value (e.g. an older card's organization) so editing
+  // never silently drops it.
   const opts =
-    value && !options.includes(value) ? [value, ...options] : [...options];
+    value && !options.some((o) => o.value === value)
+      ? [{ value, label: value }, ...options]
+      : options;
   return (
     <label className={`flex flex-col gap-1 ${className}`}>
       <span className="text-sm font-medium text-slate-700">{label}</span>
@@ -531,10 +555,10 @@ function SelectField({
         onChange={onChange}
         className="rounded-[--radius-panel] border border-border bg-canvas px-3 py-2 text-sm focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/25"
       >
-        <option value="">Choose an organization…</option>
+        <option value="">{placeholder}</option>
         {opts.map((o) => (
-          <option key={o} value={o}>
-            {o}
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>

@@ -187,3 +187,20 @@ export function logoForState(brand: SignatureBrand, state: string): string {
   const abbr = normalizeState(state);
   return (abbr && brand.logosByState[abbr]) || brand.logoPath;
 }
+
+/** 2-letter abbreviation → full state name (e.g. "NY" → "New York"). */
+const STATE_NAME_BY_ABBR: Record<string, string> = Object.fromEntries(
+  US_STATE_OPTIONS.map((s) => [s.abbr, s.name]),
+);
+
+/**
+ * A searchable location string for a card, combining city + state abbreviation
+ * + full state name so one substring search matches any of them (e.g. "Bronx",
+ * "NY", or "New York" all hit `"Bronx NY New York"`). Deduped; "" when empty.
+ */
+export function buildLocationText(city: string, state: string): string {
+  const abbr = normalizeState(state);
+  const fullName = abbr ? (STATE_NAME_BY_ABBR[abbr] ?? "") : "";
+  const parts = [city.trim(), abbr, fullName].filter(Boolean);
+  return [...new Set(parts)].join(" ");
+}

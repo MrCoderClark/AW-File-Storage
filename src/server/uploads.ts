@@ -13,6 +13,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 import { fileCategory } from "../lib/file-type";
+import { buildLocationText } from "../lib/signature-brand";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { uuidv7 } from "./id";
@@ -469,6 +470,7 @@ export async function listFilesPage(
         likeContains(schema.files.contactOrg, q),
         likeContains(schema.files.contactTitle, q),
         likeContains(schema.files.contactEmail, q),
+        likeContains(schema.files.contactLocation, q),
         likeContains(schema.user.name, q),
       ),
     );
@@ -541,6 +543,7 @@ export async function backfillSearchFields(
       storageKey: schema.files.storageKey,
       category: schema.files.category,
       contactName: schema.files.contactName,
+      contactLocation: schema.files.contactLocation,
     })
     .from(schema.files)
     .where(
@@ -556,7 +559,13 @@ export async function backfillSearchFields(
           ? "vcard"
           : fileCategory(f.originalName, f.contentType, f.kind);
     }
-    if (f.kind === "vcard" && f.contactName == null && f.status === "ready") {
+    // Re-read the card when any denormalised field is still missing — covers
+    // rows backfilled before `contact_location` existed.
+    if (
+      f.kind === "vcard" &&
+      f.status === "ready" &&
+      (f.contactName == null || f.contactLocation == null)
+    ) {
       const raw = await r2GetText(cfg, env.R2_PRIVATE_BUCKET, f.storageKey);
       if (raw) {
         const p = parseVcard(raw);
@@ -564,6 +573,8 @@ export async function backfillSearchFields(
         patch.contactOrg = p.organization || null;
         patch.contactTitle = p.title || null;
         patch.contactEmail = p.email || null;
+        patch.contactLocation =
+          buildLocationText(p.address.city, p.address.state) || null;
       }
     }
     if (Object.keys(patch).length > 0) {
@@ -711,6 +722,8 @@ export async function editVcard(
     contactOrg: parsed.organization || null,
     contactTitle: parsed.title || null,
     contactEmail: parsed.email || null,
+    contactLocation:
+      buildLocationText(parsed.address.city, parsed.address.state) || null,
     ...(newName?.trim() ? { originalName: newName.trim() } : {}),
   });
 
@@ -887,6 +900,8 @@ async function publishVcard(
     contactOrg: parsed.organization || null,
     contactTitle: parsed.title || null,
     contactEmail: parsed.email || null,
+    contactLocation:
+      buildLocationText(parsed.address.city, parsed.address.state) || null,
     category: "vcard",
   });
   await addUsage(db, orgId, normalizedSize);

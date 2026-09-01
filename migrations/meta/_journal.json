@@ -64,6 +64,13 @@
       "when": 1788275587344,
       "tag": "0008_big_microchip",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788290886087,
+      "tag": "0009_green_ultimo",
+      "breakpoints": true
     }
   ]
 }
