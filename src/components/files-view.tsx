@@ -648,6 +648,14 @@ function FileRow({
                     Signature
                   </MenuLink>
                 )}
+                {published && file.kind === "vcard" && file.canManage && (
+                  <MenuLink
+                    href={`/files/${file.id}/edit`}
+                    onSelect={() => setMenuOpen(false)}
+                  >
+                    Edit card
+                  </MenuLink>
+                )}
                 {canDownload && (
                   <MenuItem onClick={() => { setMenuOpen(false); void download(); }}>
                     Download
