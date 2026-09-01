@@ -65,6 +65,16 @@ export const files = sqliteTable(
     failureReason: text("failure_reason"),
     publicSlug: text("public_slug"),
     publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    // Searchable contact fields, denormalised from the vCard at finalize (spec
+    // 0003) so the Files list can search by name/company/title/email in SQL —
+    // the `.vcf` in R2 stays the source of truth. Null for non-vCard files.
+    contactName: text("contact_name"),
+    contactOrg: text("contact_org"),
+    contactTitle: text("contact_title"),
+    contactEmail: text("contact_email"),
+    // Persisted coarse type (FileCategory in lib/file-type.ts), so the Files
+    // "Filter by type" control is an indexable WHERE rather than a client guess.
+    category: text("category"),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
     deletedBy: text("deleted_by").references(() => user.id),
     createdAt: createdAt(),
@@ -73,6 +83,16 @@ export const files = sqliteTable(
   (t) => [
     index("file_org_deleted_created_idx").on(t.orgId, t.deletedAt, t.createdAt),
     index("file_org_kind_idx").on(t.orgId, t.kind),
+    // Keyset pagination + server-side filter/sort access paths for the Files list
+    // (spec 0007). Each ends in `id` (the uuidv7 PK, ~created_at) as the cursor
+    // tiebreaker. A leading-wildcard LIKE search won't use these, but the
+    // (org_id, deleted_at) prefix keeps the scanned set to one org's live rows.
+    index("file_org_deleted_id_idx").on(t.orgId, t.deletedAt, t.id),
+    index("file_org_deleted_category_id_idx").on(t.orgId, t.deletedAt, t.category, t.id),
+    index("file_org_deleted_status_id_idx").on(t.orgId, t.deletedAt, t.status, t.id),
+    index("file_org_deleted_name_id_idx").on(t.orgId, t.deletedAt, t.originalName, t.id),
+    index("file_org_deleted_size_id_idx").on(t.orgId, t.deletedAt, t.sizeBytes, t.id),
+    index("file_org_deleted_updated_id_idx").on(t.orgId, t.deletedAt, t.updatedAt, t.id),
     // Global uniqueness: a public slug is a path on one shared public domain.
     uniqueIndex("file_public_slug_uq").on(t.publicSlug),
     // One live copy of a given file per org (ignores soft-deleted rows).

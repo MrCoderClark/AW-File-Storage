@@ -57,6 +57,13 @@
       "when": 1788210684170,
       "tag": "0007_dashing_echo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788275587344,
+      "tag": "0008_big_microchip",
+      "breakpoints": true
     }
   ]
 }
