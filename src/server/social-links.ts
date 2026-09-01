@@ -197,6 +197,33 @@ export async function setStateLogoUrl(
     });
 }
 
+/**
+ * Point a state's row at a logo already uploaded for another state in this org —
+ * no re-upload, no duplicate object; the two states share the one stored image.
+ * The URL must be one this org already stores, so it can't be aimed at an
+ * arbitrary address. Owner/admin only (enforced at the route).
+ */
+export async function reuseStateLogo(
+  env: SocialLinksEnv,
+  orgId: string,
+  state: string,
+  logoUrl: string,
+): Promise<void> {
+  const key = normKey(state);
+  if (!key) throw new SocialLinkError(400, "A valid state is required.");
+  const wanted = clean(logoUrl);
+  if (!wanted) throw new SocialLinkError(400, "A logo is required.");
+  const db = buildDb(env.DB);
+  const owned = await db
+    .select({ logoUrl: orgSocialLinks.logoUrl })
+    .from(orgSocialLinks)
+    .where(eq(orgSocialLinks.orgId, orgId));
+  if (!owned.some((r) => r.logoUrl === wanted)) {
+    throw new SocialLinkError(400, "That logo isn't one of your uploaded logos.");
+  }
+  await setStateLogoUrl(env, orgId, key, wanted);
+}
+
 function r2Config(env: LogoUploadEnv): R2Config {
   return {
     accountId: env.R2_ACCOUNT_ID,
@@ -236,7 +263,10 @@ export async function uploadStateLogo(
   return logoUrl;
 }
 
-/** Remove a state's uploaded logo: delete the object(s) and clear the URL. */
+/**
+ * Detach a state's logo: clear its URL, and delete the stored object only if no
+ * other state is reusing it (a shared image stays until its last user drops it).
+ */
 export async function clearStateLogo(
   env: LogoUploadEnv,
   orgId: string,
@@ -244,11 +274,20 @@ export async function clearStateLogo(
 ): Promise<void> {
   const key = normKey(state);
   if (!key) return;
+  const db = buildDb(env.DB);
+  const rows = await db
+    .select({ state: orgSocialLinks.state, logoUrl: orgSocialLinks.logoUrl })
+    .from(orgSocialLinks)
+    .where(eq(orgSocialLinks.orgId, orgId));
   const cfg = r2Config(env);
   for (const ext of Object.values(LOGO_TYPES)) {
-    await r2Delete(cfg, env.R2_PUBLIC_BUCKET, `logos/${orgId}/${key}.${ext}`).catch(
-      () => {},
+    const objectPath = `logos/${orgId}/${key}.${ext}`;
+    const stillUsed = rows.some(
+      (r) => r.state !== key && r.logoUrl?.includes(objectPath),
     );
+    if (!stillUsed) {
+      await r2Delete(cfg, env.R2_PUBLIC_BUCKET, objectPath).catch(() => {});
+    }
   }
   await setStateLogoUrl(env, orgId, key, null);
 }
