@@ -645,6 +645,98 @@ function assertCanManage(
 }
 
 /**
+ * Edit a published vCard in place (spec 0006 follow-up): re-validate the rebuilt
+ * card, overwrite both the durable private copy and the public object, and
+ * refresh the denormalised search fields — all while KEEPING the existing
+ * `public_slug`, so the card's public address (and any printed QR / shared link)
+ * keeps resolving. Owner/admin, or the file's own uploader. Audited.
+ */
+export async function editVcard(
+  env: UploadEnv,
+  ctx: ActorCtx,
+  fileId: string,
+  vcardText: string,
+  newName?: string,
+): Promise<{ publicUrl?: string }> {
+  const cfg = r2Config(env);
+  const db = buildDb(env.DB);
+  const scoped = orgDb(ctx.orgId, db);
+
+  const file = await scoped.files.get(fileId);
+  if (!file || file.deletedAt) throw new UploadError(404, "File not found.");
+  assertCanManage(ctx, file);
+  if (file.kind !== "vcard" || file.visibility !== "public" || !file.publicSlug) {
+    throw new UploadError(409, "Only a published contact card can be edited.");
+  }
+
+  const result = validateVcard(vcardText);
+  if (!result.ok) throw new UploadError(422, result.reason);
+
+  const normalizedSize = new TextEncoder().encode(result.normalized).length;
+  const checksum = await sha256Hex(result.normalized);
+
+  // Reject an edit that would collide with a DIFFERENT live card in this org
+  // (the (org_id, checksum) unique index). An unchanged card (same checksum on
+  // this same row) is fine and simply rewrites the same bytes.
+  const duplicate = await db
+    .select({ id: schema.files.id })
+    .from(schema.files)
+    .where(
+      and(
+        eq(schema.files.orgId, ctx.orgId),
+        eq(schema.files.checksumSha256, checksum),
+        isNull(schema.files.deletedAt),
+        ne(schema.files.id, fileId),
+      ),
+    )
+    .limit(1);
+  if (duplicate.length > 0) {
+    throw new UploadError(409, "An identical contact card is already published.");
+  }
+
+  // Overwrite the durable private copy and the public publication at the SAME
+  // slug (the URL never changes on an edit).
+  await r2Put(cfg, env.R2_PRIVATE_BUCKET, file.storageKey, result.normalized);
+  await r2Put(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(file.publicSlug), result.normalized, {
+    "Content-Type": "text/vcard; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${file.publicSlug}.vcf"`,
+    "Cache-Control": "public, max-age=300, s-maxage=300",
+  });
+
+  const parsed = parseVcard(result.normalized);
+  await scoped.files.update(fileId, {
+    sizeBytes: normalizedSize,
+    checksumSha256: checksum,
+    contactName: parsed.fullName || null,
+    contactOrg: parsed.organization || null,
+    contactTitle: parsed.title || null,
+    contactEmail: parsed.email || null,
+    ...(newName?.trim() ? { originalName: newName.trim() } : {}),
+  });
+
+  // Keep org usage correct by the size delta (can be negative).
+  const delta = normalizedSize - file.sizeBytes;
+  if (delta !== 0) {
+    await db
+      .update(schema.organization)
+      .set({
+        storageUsedBytes: sql`max(0, ${schema.organization.storageUsedBytes} + ${delta})`,
+      })
+      .where(eq(schema.organization.id, ctx.orgId));
+  }
+
+  await scoped.audit.append({
+    actorUserId: ctx.userId,
+    action: "vcard.edited",
+    targetType: "file",
+    targetId: fileId,
+    metadataJson: JSON.stringify({ slug: file.publicSlug }),
+  });
+
+  return { publicUrl: publicUrlFor(env, file.publicSlug) };
+}
+
+/**
  * Unpublish a vCard (spec 0003 AC-11): remove the public object so the address
  * returns 404, keep the durable private copy, and retire (not recycle) the slug.
  */

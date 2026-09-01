@@ -36,10 +36,24 @@ type Status = "idle" | "publishing" | "done" | "error";
 // Create Card page (spec 0006): a 3-step wizard that builds a vCard 3.0 in the
 // browser and publishes it through the normal upload pipeline. Field values
 // persist across steps (single state object), so Back never loses input.
-export function CreateCardForm() {
+//
+// In EDIT mode (`editFileId` set, `initial` pre-filled), the same wizard saves
+// changes to an existing published card via PATCH — republished under the same
+// slug — instead of creating a new one.
+export function CreateCardForm({
+  initial,
+  editFileId,
+}: {
+  initial?: CardFields;
+  editFileId?: string;
+} = {}) {
   const { refresh } = useAppData();
-  const [f, setF] = useState<CardFields>(EMPTY);
-  // Auto-fill Full name from First + Last until the user edits it themselves.
+  const editing = !!editFileId;
+  const [f, setF] = useState<CardFields>(initial ?? EMPTY);
+  // Auto-fill Full name from First + Last until the user edits Full name itself.
+  // This holds in edit mode too: the pre-filled Full name shows on load, but the
+  // moment you change First/Last it re-derives — type in Full name to keep a
+  // custom one (e.g. "Dr. Jane Doe").
   const [fullNameTouched, setFullNameTouched] = useState(false);
   const [step, setStep] = useState(0);
   const [stepError, setStepError] = useState<string | null>(null);
@@ -165,6 +179,24 @@ export function CreateCardForm() {
     return { publicUrl: result.publicUrl ?? null, fileId: result.fileId ?? null };
   }
 
+  // Edit mode: re-publish an existing card in place (same slug/URL) via PATCH.
+  async function saveEdit(
+    file: File,
+  ): Promise<{ publicUrl: string | null; fileId: string | null }> {
+    const vcard = await file.text();
+    const res = await fetch(`/api/files/${editFileId}/card`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vcard, name: file.name }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? "Saving failed.");
+    }
+    const result = (await res.json()) as { publicUrl?: string };
+    return { publicUrl: result.publicUrl ?? null, fileId: editFileId ?? null };
+  }
+
   // Form submit only ever ADVANCES a step (covers Enter in a field). Publishing
   // is deliberately not triggered here, so Enter never publishes — only an
   // explicit click on "Create & publish" does.
@@ -182,7 +214,9 @@ export function CreateCardForm() {
       const file = new File([buildVcard(f)], cardFileName(f), {
         type: "text/vcard",
       });
-      const { publicUrl: url, fileId: fid } = await publish(file);
+      const { publicUrl: url, fileId: fid } = editing
+        ? await saveEdit(file)
+        : await publish(file);
       setPublicUrl(url);
       setFileId(fid);
       setStatus("done");
@@ -200,7 +234,7 @@ export function CreateCardForm() {
           <CheckIcon className="h-6 w-6" />
         </div>
         <h2 className="mt-3 text-lg font-semibold text-brand-900">
-          Card published
+          {editing ? "Card updated" : "Card published"}
         </h2>
         {publicUrl ? (
           <>
@@ -211,7 +245,9 @@ export function CreateCardForm() {
           </>
         ) : (
           <p className="mt-1 text-sm text-muted-500">
-            The card was saved and published.
+            {editing
+              ? "Your changes were saved and republished."
+              : "The card was saved and published."}
           </p>
         )}
         <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
@@ -220,27 +256,36 @@ export function CreateCardForm() {
               href={`/signature/${fileId}`}
               className="rounded-[--radius-panel] bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-800"
             >
-              Create signature
+              {editing ? "View signature" : "Create signature"}
             </Link>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              setF(EMPTY);
-              setFullNameTouched(false);
-              setStep(0);
-              setStatus("idle");
-              setPublicUrl(null);
-              setFileId(null);
-            }}
-            className={`rounded-[--radius-panel] px-5 py-2 text-sm font-semibold ${
-              fileId
-                ? "border border-border text-slate-700 hover:bg-canvas"
-                : "bg-brand-600 text-white hover:bg-brand-800"
-            }`}
-          >
-            Create another
-          </button>
+          {editing ? (
+            <Link
+              href="/files"
+              className="rounded-[--radius-panel] border border-border px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-canvas"
+            >
+              Back to files
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setF(EMPTY);
+                setFullNameTouched(false);
+                setStep(0);
+                setStatus("idle");
+                setPublicUrl(null);
+                setFileId(null);
+              }}
+              className={`rounded-[--radius-panel] px-5 py-2 text-sm font-semibold ${
+                fileId
+                  ? "border border-border text-slate-700 hover:bg-canvas"
+                  : "bg-brand-600 text-white hover:bg-brand-800"
+              }`}
+            >
+              Create another
+            </button>
+          )}
         </div>
       </div>
     );
@@ -326,7 +371,13 @@ export function CreateCardForm() {
             disabled={busy}
             className="rounded-[--radius-panel] bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500 disabled:opacity-60"
           >
-            {busy ? "Publishing…" : "Create & publish"}
+            {busy
+              ? editing
+                ? "Saving…"
+                : "Publishing…"
+              : editing
+                ? "Save changes"
+                : "Create & publish"}
           </button>
         )}
       </div>
