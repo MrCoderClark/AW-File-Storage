@@ -9,6 +9,7 @@ import {
   getStateLogoUrl,
   listSocialLinks,
   resolveSocials,
+  reuseStateLogo,
   seedDefaultsFromBrand,
   setStateLogoUrl,
   upsertSocialLink,
@@ -166,6 +167,37 @@ describe("social-links service (spec 0009 follow-up)", () => {
       expect(row.facebook).toBe("https://fb/ca");
       expect(row.instagram).toBe("https://ig/ca");
       expect(row.logoUrl).toBe("https://cdn/ca.png");
+    });
+  });
+
+  describe("reuseStateLogo", () => {
+    it("points a state at a logo already uploaded for another state", async () => {
+      await setStateLogoUrl(ENV, ORG, "*", "https://cdn/default.png?v=1");
+      await reuseStateLogo(ENV, ORG, "New York", "https://cdn/default.png?v=1");
+      // Both states now resolve to the one stored image.
+      expect(await getStateLogoUrl(ENV, ORG, "NY")).toBe("https://cdn/default.png?v=1");
+      expect(await getStateLogoUrl(ENV, ORG, "TX")).toBe("https://cdn/default.png?v=1");
+    });
+
+    it("rejects a URL the org doesn't already store", async () => {
+      await setStateLogoUrl(ENV, ORG, "*", "https://cdn/default.png");
+      await expect(
+        reuseStateLogo(ENV, ORG, "NY", "https://evil.example/logo.png"),
+      ).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("is org-scoped — can't reuse another org's logo URL", async () => {
+      await setStateLogoUrl(ENV, "org-b", "*", "https://cdn/borg.png");
+      await expect(
+        reuseStateLogo(ENV, ORG, "NY", "https://cdn/borg.png"),
+      ).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("rejects an unresolvable state", async () => {
+      await setStateLogoUrl(ENV, ORG, "*", "https://cdn/default.png");
+      await expect(
+        reuseStateLogo(ENV, ORG, "Atlantis", "https://cdn/default.png"),
+      ).rejects.toMatchObject({ status: 400 });
     });
   });
 });
