@@ -22,7 +22,7 @@ The only way to see stored files today is the small list under the uploader on t
 
 ## Decision
 
-**Chosen option**: A dedicated `/files` page + a `FilesView` client component. Reuse the existing action routes; add `PATCH /api/files/[id]` for rename and enrich `listFiles` with the uploader name, content type, and last-modified. Search + type filter are client-side. **Folders and "New Folder" are out of scope** (no folder concept in the data model; its own migration + upload-path change later). The Upload Center keeps the uploader; its inline file list is superseded by this page.
+**Chosen option**: A dedicated `/files` page + a `FilesView` client component. Reuse the existing action routes; add `PATCH /api/files/[id]` for rename and enrich `listFiles` with the uploader name, content type, and last-modified. Search + type filter are client-side *(superseded — moved server-side; see Follow-up below)*. **Folders and "New Folder" are out of scope** (no folder concept in the data model; its own migration + upload-path change later). The Upload Center keeps the uploader; its inline file list is superseded by this page.
 
 **Implementation skills**: `tailwindcss-v4` · `frontend-design`.
 
@@ -53,3 +53,14 @@ The only way to see stored files today is the small list under the uploader on t
 4. Per-row actions (rename, copy, download, unpublish, delete) + multi-select bulk delete.
 5. Wire the header "Search files" box to `/files?q=`.
 6. Tests for the category helper and `renameFile`.
+
+## Follow-up — server-side pagination, search & filtering (2026-09-01, PR #25)
+
+The original AC-2/AC-3 client-side approach (load all rows, filter in memory) was replaced before it became a scale problem, and to make **contact content** searchable — the searchable fields (company, title, email) live inside the `.vcf` in R2, not the DB, so filename-only search couldn't find them.
+
+- **Data model:** new `file` columns `contact_name/org/title/email` (denormalised from the vCard at finalize via `parseVcard`) + a persisted `category` (`fileCategory`), with composite keyset indexes. Additive **migration 0008** (5 `ADD COLUMN` + 6 `CREATE INDEX`, no table rebuild). Existing rows filled once by owner-only `POST /api/admin/backfill-search` (idempotent).
+- **Query:** `listFilesPage(env, ctx, opts)` in `uploads.ts` — **keyset (cursor) pagination** ordering by `(sortColumn, id)` with an opaque base64 `[sortValue, id]` cursor (no OFFSET → stable under inserts/deletes); server-side `LIKE` search over filename + the contact fields + uploader name; `category`/`kind`/`status` equality filters; Name/Size/Modified/Newest sorts. `encodeCursor`/`decodeCursor` helpers. `listFiles` removed (only the route used it).
+- **API:** `GET /api/files` now takes `q/category/kind/status/sort/dir/cursor/limit` and returns `{ items, nextCursor }`.
+- **UI:** `/files/page.tsx` server-renders the first page (default 30 rows); `FilesView` does debounced+abortable search, **Load more**, sortable headers, and syncs `q/category/sort/dir` to the URL. Client-side filtering removed.
+- **Deferred:** SQLite **FTS5** over the same columns (chosen against for now — stays in Drizzle's additive-migration model; revisit past ~10k cards/org). Numbered pagination was rejected — it needs OFFSET, which keyset deliberately avoids; **Next/Prev** (still keyset) is the fallback if the growing DOM from Load more becomes an issue.
+- Tests: `test/files-list.test.ts` (pagination, keyset-vs-offset stability, sorts, search, filters, org-scoping).
