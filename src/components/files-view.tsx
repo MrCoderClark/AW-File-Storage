@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAppData } from "@/components/app-data";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -12,7 +13,10 @@ import {
 } from "@/lib/file-type";
 import { formatBytes, timeAgo } from "@/lib/format";
 
-interface FileItem {
+// The wire shape of a file row: the server's FileListItem with its dates
+// serialized to ISO strings (so the RSC-seeded first page and the API's
+// load-more pages are identical).
+export interface SerializedFile {
   id: string;
   name: string;
   kind: "vcard" | "other";
@@ -22,10 +26,15 @@ interface FileItem {
   contentType: string;
   publicUrl?: string;
   uploadedByName: string;
+  contactName: string | null;
+  contactOrg: string | null;
   createdAt: string;
   updatedAt: string;
   canManage: boolean;
 }
+
+type Sort = "new" | "name" | "size" | "modified";
+type Dir = "asc" | "desc";
 
 const CATEGORIES: FileCategory[] = [
   "vcard",
@@ -36,54 +45,149 @@ const CATEGORIES: FileCategory[] = [
   "other",
 ];
 
-export function FilesView({ initialQuery = "" }: { initialQuery?: string }) {
+const SEARCH_DEBOUNCE_MS = 300;
+
+export function FilesView({
+  initialItems,
+  initialCursor,
+  initialQuery = "",
+  initialCategory = "all",
+  initialSort = "new",
+  initialDir = "desc",
+}: {
+  initialItems: SerializedFile[];
+  initialCursor: string | null;
+  initialQuery?: string;
+  initialCategory?: "all" | FileCategory;
+  initialSort?: Sort;
+  initialDir?: Dir;
+}) {
   const { refresh } = useAppData();
-  const [files, setFiles] = useState<FileItem[] | null>(null);
-  const [error, setError] = useState(false);
-  const [search, setSearch] = useState(initialQuery);
-  const [category, setCategory] = useState<"all" | FileCategory>("all");
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const [items, setItems] = useState<SerializedFile[]>(initialItems);
+  const [cursor, setCursor] = useState<string | null>(initialCursor);
+  const [search, setSearch] = useState(initialQuery); // the live input value
+  const [query, setQuery] = useState(initialQuery); // debounced, drives fetches
+  const [category, setCategory] = useState<"all" | FileCategory>(initialCategory);
+  const [sort, setSort] = useState<Sort>(initialSort);
+  const [dir, setDir] = useState<Dir>(initialDir);
+  const [phase, setPhase] = useState<
+    "idle" | "loading" | "loadingMore" | "error"
+  >("idle");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDialog, setBulkDialog] = useState(false);
 
-  const load = useCallback(async () => {
-    setError(false);
-    try {
-      const res = await fetch("/api/files", { cache: "no-store" });
-      if (!res.ok) throw new Error(String(res.status));
-      const body = (await res.json()) as { files: FileItem[] };
-      setFiles(body.files);
-      setSelected(new Set());
-    } catch {
-      setError(true);
-    }
-  }, []);
+  const firstRender = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // After a mutation, reload the list AND refresh the rail (Storage Usage etc.).
-  const reloadAll = useCallback(async () => {
-    await load();
-    refresh();
-  }, [load, refresh]);
+  // Build the query string for the current filter/sort (and an optional cursor).
+  const buildParams = useCallback(
+    (nextCursor?: string) => {
+      const p = new URLSearchParams();
+      const q = query.trim();
+      if (q) p.set("q", q);
+      if (category !== "all") p.set("category", category);
+      if (sort !== "new") p.set("sort", sort);
+      if (dir !== "desc") p.set("dir", dir);
+      if (nextCursor) p.set("cursor", nextCursor);
+      return p;
+    },
+    [query, category, sort, dir],
+  );
 
+  // Debounce the search box into `query`.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (search === query) return;
+    const t = setTimeout(() => setQuery(search), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [search, query]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return (files ?? []).filter((f) => {
-      if (q && !f.name.toLowerCase().includes(q)) return false;
-      if (
-        category !== "all" &&
-        fileCategory(f.name, f.contentType, f.kind) !== category
-      ) {
-        return false;
-      }
-      return true;
+  // Fetch the first page whenever the query/filter/sort changes — and keep those
+  // in the URL so a view is shareable and the back button works. Skips the very
+  // first render (the server already provided that page).
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    const params = buildParams();
+    // Reflect state in the URL (without the ephemeral cursor).
+    router.replace(`${pathname}${params.toString() ? `?${params}` : ""}`, {
+      scroll: false,
     });
-  }, [files, search, category]);
 
-  const manageable = filtered.filter((f) => f.canManage);
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setPhase("loading");
+    void (async () => {
+      try {
+        const res = await fetch(`/api/files?${params}`, {
+          cache: "no-store",
+          signal: ac.signal,
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const body = (await res.json()) as {
+          items: SerializedFile[];
+          nextCursor: string | null;
+        };
+        setItems(body.items);
+        setCursor(body.nextCursor);
+        setSelected(new Set());
+        setPhase("idle");
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        setPhase("error");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, category, sort, dir]);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || phase === "loadingMore") return;
+    setPhase("loadingMore");
+    try {
+      const res = await fetch(`/api/files?${buildParams(cursor)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const body = (await res.json()) as {
+        items: SerializedFile[];
+        nextCursor: string | null;
+      };
+      setItems((prev) => [...prev, ...body.items]);
+      setCursor(body.nextCursor);
+      setPhase("idle");
+    } catch {
+      setPhase("error");
+    }
+  }, [cursor, phase, buildParams]);
+
+  // Re-run the current query from the first page (after a mutation). Also
+  // refreshes the rail (Storage Usage etc.).
+  const reloadAll = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/files?${buildParams()}`, {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const body = (await res.json()) as {
+          items: SerializedFile[];
+          nextCursor: string | null;
+        };
+        setItems(body.items);
+        setCursor(body.nextCursor);
+        setSelected(new Set());
+      }
+    } finally {
+      refresh();
+    }
+  }, [buildParams, refresh]);
+
+  const manageable = items.filter((f) => f.canManage);
   const allSelected =
     manageable.length > 0 && manageable.every((f) => selected.has(f.id));
 
@@ -97,6 +201,17 @@ export function FilesView({ initialQuery = "" }: { initialQuery?: string }) {
   }
   function toggleAll() {
     setSelected(allSelected ? new Set() : new Set(manageable.map((f) => f.id)));
+  }
+
+  // Click a sortable header: toggle direction if it's the active sort, else
+  // switch to it with a sensible default direction.
+  function sortBy(next: Sort) {
+    if (sort === next) {
+      setDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSort(next);
+      setDir(next === "name" ? "asc" : "desc");
+    }
   }
 
   async function bulkDelete() {
@@ -114,12 +229,15 @@ export function FilesView({ initialQuery = "" }: { initialQuery?: string }) {
     }
   }
 
+  const loading = phase === "loading";
+
   return (
     <div className="mx-auto max-w-6xl">
       <h1 className="text-2xl font-semibold text-brand-900">
         Files{" "}
         <span className="text-lg font-normal text-muted-500">
-          ({files?.length ?? 0})
+          ({items.length}
+          {cursor ? "+" : ""})
         </span>
       </h1>
 
@@ -133,7 +251,7 @@ export function FilesView({ initialQuery = "" }: { initialQuery?: string }) {
         </Link>
         <input
           type="search"
-          placeholder="Search files…"
+          placeholder="Search name, company, email…"
           aria-label="Search files"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -182,34 +300,30 @@ export function FilesView({ initialQuery = "" }: { initialQuery?: string }) {
 
       {/* Table / states */}
       <div className="mt-4 rounded-[--radius-panel] border border-border bg-surface">
-        {error ? (
+        {phase === "error" ? (
           <div className="p-10 text-center text-sm text-muted-500">
             <p>Couldn&apos;t load your files.</p>
             <button
               type="button"
-              onClick={() => void load()}
+              onClick={() => void reloadAll()}
               className="mt-3 rounded-[--radius-panel] border border-border px-3 py-1 text-xs font-medium hover:bg-canvas"
             >
               Retry
             </button>
           </div>
-        ) : files === null ? (
-          <ul className="divide-y divide-border">
-            {[0, 1, 2, 3].map((i) => (
-              <li key={i} className="px-4 py-3">
-                <div className="h-6 w-2/3 animate-pulse rounded bg-canvas" />
-              </li>
-            ))}
-          </ul>
-        ) : filtered.length === 0 ? (
+        ) : items.length === 0 ? (
           <p className="p-10 text-center text-sm text-muted-500">
-            {files.length === 0
-              ? "No files yet. Upload one to get started."
-              : "No files match your search."}
+            {query || category !== "all"
+              ? "No files match your search."
+              : "No files yet. Upload one to get started."}
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
+            <table
+              className={`w-full min-w-[760px] text-left text-sm ${
+                loading ? "opacity-60" : ""
+              }`}
+            >
               <thead>
                 <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-500">
                   <th scope="col" className="w-10 px-4 py-2.5">
@@ -222,9 +336,24 @@ export function FilesView({ initialQuery = "" }: { initialQuery?: string }) {
                       className="h-4 w-4 rounded-sm border-border accent-brand-600"
                     />
                   </th>
-                  <th scope="col" className="px-4 py-2.5 font-medium">Name</th>
-                  <th scope="col" className="px-4 py-2.5 font-medium">Size</th>
-                  <th scope="col" className="px-4 py-2.5 font-medium">Modified</th>
+                  <SortHeader
+                    label="Name"
+                    active={sort === "name"}
+                    dir={dir}
+                    onClick={() => sortBy("name")}
+                  />
+                  <SortHeader
+                    label="Size"
+                    active={sort === "size"}
+                    dir={dir}
+                    onClick={() => sortBy("size")}
+                  />
+                  <SortHeader
+                    label="Modified"
+                    active={sort === "modified"}
+                    dir={dir}
+                    onClick={() => sortBy("modified")}
+                  />
                   <th scope="col" className="px-4 py-2.5 font-medium">Uploaded by</th>
                   <th scope="col" className="px-4 py-2.5 font-medium">Status</th>
                   <th scope="col" className="px-4 py-2.5 font-medium">
@@ -233,7 +362,7 @@ export function FilesView({ initialQuery = "" }: { initialQuery?: string }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {filtered.map((f) => (
+                {items.map((f) => (
                   <FileRow
                     key={f.id}
                     file={f}
@@ -247,7 +376,51 @@ export function FilesView({ initialQuery = "" }: { initialQuery?: string }) {
           </div>
         )}
       </div>
+
+      {/* Load more */}
+      {cursor && items.length > 0 && (
+        <div className="mt-4 flex justify-center">
+          <button
+            type="button"
+            disabled={phase === "loadingMore"}
+            onClick={() => void loadMore()}
+            className="rounded-[--radius-panel] border border-border bg-surface px-4 py-2 text-sm font-medium text-slate-700 hover:bg-canvas disabled:opacity-60"
+          >
+            {phase === "loadingMore" ? "Loading…" : "Load more"}
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+function SortHeader({
+  label,
+  active,
+  dir,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  dir: Dir;
+  onClick: () => void;
+}) {
+  return (
+    <th scope="col" className="px-4 py-2.5 font-medium">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+        className={`inline-flex items-center gap-1 uppercase tracking-wide hover:text-slate-700 ${
+          active ? "text-slate-700" : ""
+        }`}
+      >
+        {label}
+        <span aria-hidden className="text-[9px]">
+          {active ? (dir === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+    </th>
   );
 }
 
@@ -257,7 +430,7 @@ function FileRow({
   onToggle,
   onChanged,
 }: {
-  file: FileItem;
+  file: SerializedFile;
   selected: boolean;
   onToggle: () => void;
   onChanged: () => void | Promise<void>;
@@ -295,6 +468,7 @@ function FileRow({
   const cat = fileCategory(file.name, file.contentType, file.kind);
   const published = file.visibility === "public";
   const canDownload = file.visibility === "private" && file.status === "ready";
+  const subtitle = file.contactOrg || file.contactName || "";
 
   async function act(fn: () => Promise<void>) {
     setBusy(true);
@@ -404,8 +578,15 @@ function FileRow({
               </button>
             </span>
           ) : (
-            <span className="block min-w-0 truncate font-medium text-slate-800">
-              {file.name}
+            <span className="block min-w-0">
+              <span className="block truncate font-medium text-slate-800">
+                {file.name}
+              </span>
+              {subtitle && (
+                <span className="block truncate text-xs text-muted-500">
+                  {subtitle}
+                </span>
+              )}
             </span>
           )}
         </div>
@@ -588,7 +769,7 @@ function DotsIcon({ className }: { className?: string }) {
   );
 }
 
-function StatusBadge({ file }: { file: FileItem }) {
+function StatusBadge({ file }: { file: SerializedFile }) {
   let label = "Private";
   let cls = "bg-slate-100 text-slate-600";
   if (file.status === "failed") {

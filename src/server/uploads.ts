@@ -1,4 +1,18 @@
-import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  isNull,
+  like,
+  lt,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
+import { fileCategory } from "../lib/file-type";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { uuidv7 } from "./id";
@@ -13,7 +27,7 @@ import {
   r2Put,
   type R2Config,
 } from "./r2";
-import { deriveSlug, validateVcard } from "./vcard";
+import { deriveSlug, parseVcard, validateVcard } from "./vcard";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024; // 5 GiB (spec 0003 AC-4)
 export const MAX_VCARD_BYTES = 262144; // 256 KB
@@ -222,6 +236,8 @@ export async function finalizeUpload(
     status: "ready",
     sizeBytes: size,
     storageKey: permKey,
+    // Persist the coarse type so the Files list can filter on it in SQL.
+    category: fileCategory(file.originalName, file.contentType, file.kind),
   });
   await addUsage(db, ctx.orgId, size);
   await scoped.uploads.markComplete(uploadSessionId);
@@ -269,6 +285,10 @@ export interface FileListItem {
   contentType: string;
   publicUrl?: string;
   uploadedByName: string;
+  // Denormalised contact fields (null for non-vCards) — shown as a subtitle and
+  // searched server-side. The published .vcf remains the source of truth.
+  contactName: string | null;
+  contactOrg: string | null;
   createdAt: Date;
   updatedAt: Date;
   // Whether THIS caller may rename/unpublish/delete this file: owners/admins may
@@ -277,39 +297,72 @@ export interface FileListItem {
   canManage: boolean;
 }
 
-/**
- * All live files for the org, newest first, with the public address for
- * published vCards and the uploader's name (spec 0007). Explicit org filter +
- * a join to `user` for Uploaded By.
- */
-export async function listFiles(
+/** How a Files-list page is sorted. "new" is the uuidv7 id (≈ upload time). */
+export type FileSort = "new" | "name" | "size" | "modified";
+export type SortDir = "asc" | "desc";
+type FileStatus = "pending" | "uploading" | "validating" | "ready" | "failed";
+
+export interface ListFilesOpts {
+  q?: string;
+  category?: string; // a FileCategory (lib/file-type.ts)
+  kind?: "vcard" | "other";
+  status?: FileStatus;
+  sort?: FileSort;
+  dir?: SortDir;
+  cursor?: string | null;
+  limit?: number;
+}
+
+export interface FilesPage {
+  items: FileListItem[];
+  nextCursor: string | null;
+}
+
+export const DEFAULT_PAGE_SIZE = 30;
+const MAX_PAGE_SIZE = 100;
+
+// The column set every list query selects — shared by the paged query so a row
+// can be mapped to a FileListItem in one place.
+const fileListColumns = {
+  id: schema.files.id,
+  name: schema.files.originalName,
+  kind: schema.files.kind,
+  status: schema.files.status,
+  visibility: schema.files.visibility,
+  sizeBytes: schema.files.sizeBytes,
+  contentType: schema.files.contentType,
+  publicSlug: schema.files.publicSlug,
+  uploadedBy: schema.files.uploadedBy,
+  uploaderName: schema.user.name,
+  contactName: schema.files.contactName,
+  contactOrg: schema.files.contactOrg,
+  createdAt: schema.files.createdAt,
+  updatedAt: schema.files.updatedAt,
+} as const;
+
+interface FileListRow {
+  id: string;
+  name: string;
+  kind: "vcard" | "other";
+  status: FileStatus;
+  visibility: "private" | "public";
+  sizeBytes: number;
+  contentType: string;
+  publicSlug: string | null;
+  uploadedBy: string;
+  uploaderName: string | null;
+  contactName: string | null;
+  contactOrg: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+function toListItem(
   env: UploadEnv,
   ctx: ActorCtx,
-): Promise<FileListItem[]> {
-  const db = buildDb(env.DB);
-  const rows = await db
-    .select({
-      id: schema.files.id,
-      name: schema.files.originalName,
-      kind: schema.files.kind,
-      status: schema.files.status,
-      visibility: schema.files.visibility,
-      sizeBytes: schema.files.sizeBytes,
-      contentType: schema.files.contentType,
-      publicSlug: schema.files.publicSlug,
-      uploadedBy: schema.files.uploadedBy,
-      uploaderName: schema.user.name,
-      createdAt: schema.files.createdAt,
-      updatedAt: schema.files.updatedAt,
-    })
-    .from(schema.files)
-    .leftJoin(schema.user, eq(schema.user.id, schema.files.uploadedBy))
-    .where(
-      and(eq(schema.files.orgId, ctx.orgId), isNull(schema.files.deletedAt)),
-    )
-    .orderBy(desc(schema.files.createdAt));
-
-  return rows.map((f) => ({
+  f: FileListRow,
+): FileListItem {
+  return {
     id: f.id,
     name: f.name,
     kind: f.kind,
@@ -320,10 +373,205 @@ export async function listFiles(
     publicUrl:
       f.visibility === "public" ? publicUrlFor(env, f.publicSlug) : undefined,
     uploadedByName: f.uploaderName ?? "Unknown",
+    contactName: f.contactName,
+    contactOrg: f.contactOrg,
     createdAt: f.createdAt,
     updatedAt: f.updatedAt,
     canManage: ctx.canManageAny || f.uploadedBy === ctx.userId,
-  }));
+  };
+}
+
+/** The `file` column a given sort orders by (the id is always the tiebreaker). */
+function sortColumn(sort: FileSort) {
+  switch (sort) {
+    case "name":
+      return schema.files.originalName;
+    case "size":
+      return schema.files.sizeBytes;
+    case "modified":
+      return schema.files.updatedAt;
+    default:
+      return schema.files.id;
+  }
+}
+
+/** The sort value carried in the cursor for a row (id for "new"). */
+function sortValueOf(sort: FileSort, row: FileListRow): string | number {
+  switch (sort) {
+    case "name":
+      return row.name;
+    case "size":
+      return row.sizeBytes;
+    case "modified":
+      return row.updatedAt.getTime();
+    default:
+      return row.id;
+  }
+}
+
+/** Opaque cursor: base64 of `[sortValue, id]` from the last row of a page. */
+export function encodeCursor(sortValue: string | number, id: string): string {
+  return Buffer.from(JSON.stringify([sortValue, id])).toString("base64url");
+}
+
+export function decodeCursor(
+  cursor: string,
+): { sortValue: string | number; id: string } | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString());
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      (typeof parsed[0] === "string" || typeof parsed[0] === "number") &&
+      typeof parsed[1] === "string"
+    ) {
+      return { sortValue: parsed[0], id: parsed[1] };
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
+// Escape LIKE wildcards in user input so a literal % or _ isn't a wildcard.
+function likeContains(col: Parameters<typeof like>[0], term: string): SQL {
+  const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
+  return like(col, `%${escaped}%`);
+}
+
+/**
+ * One keyset-paginated, filtered, sorted page of the org's live files (spec
+ * 0003/0007). Ordering is `(sortColumn, id)` so the opaque cursor is stable
+ * under concurrent inserts/deletes — no OFFSET. Search is a LIKE over the
+ * filename, the denormalised contact fields, and the uploader's name.
+ */
+export async function listFilesPage(
+  env: UploadEnv,
+  ctx: ActorCtx,
+  opts: ListFilesOpts = {},
+): Promise<FilesPage> {
+  const sort: FileSort = opts.sort ?? "new";
+  const dir: SortDir = opts.dir ?? "desc";
+  const limit = Math.min(Math.max(opts.limit ?? DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
+  const db = buildDb(env.DB);
+
+  const conds: (SQL | undefined)[] = [
+    eq(schema.files.orgId, ctx.orgId),
+    isNull(schema.files.deletedAt),
+  ];
+
+  const q = opts.q?.trim();
+  if (q) {
+    conds.push(
+      or(
+        likeContains(schema.files.originalName, q),
+        likeContains(schema.files.contactName, q),
+        likeContains(schema.files.contactOrg, q),
+        likeContains(schema.files.contactTitle, q),
+        likeContains(schema.files.contactEmail, q),
+        likeContains(schema.user.name, q),
+      ),
+    );
+  }
+  if (opts.category) conds.push(eq(schema.files.category, opts.category));
+  if (opts.kind) conds.push(eq(schema.files.kind, opts.kind));
+  if (opts.status) conds.push(eq(schema.files.status, opts.status));
+
+  // Keyset predicate: rows strictly after the cursor in the sort direction.
+  const col = sortColumn(sort);
+  if (opts.cursor) {
+    const decoded = decodeCursor(opts.cursor);
+    if (decoded) {
+      const primary =
+        sort === "modified"
+          ? new Date(decoded.sortValue as number)
+          : decoded.sortValue;
+      const cmp = dir === "desc" ? lt : gt;
+      conds.push(
+        or(
+          cmp(col, primary),
+          and(eq(col, primary), cmp(schema.files.id, decoded.id)),
+        ),
+      );
+    }
+  }
+
+  const dirFn = dir === "desc" ? desc : asc;
+  const orderBy =
+    sort === "new" ? [dirFn(schema.files.id)] : [dirFn(col), dirFn(schema.files.id)];
+
+  const rows = await db
+    .select(fileListColumns)
+    .from(schema.files)
+    .leftJoin(schema.user, eq(schema.user.id, schema.files.uploadedBy))
+    .where(and(...conds))
+    .orderBy(...orderBy)
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+  const nextCursor =
+    hasMore && last ? encodeCursor(sortValueOf(sort, last), last.id) : null;
+
+  return { items: page.map((f) => toListItem(env, ctx, f)), nextCursor };
+}
+
+/**
+ * One-time, idempotent backfill of the denormalised search columns for existing
+ * rows (spec 0007 follow-up): sets `category` for every live file, and reads
+ * each ready vCard back from R2 to parse its contact fields. Safe to re-run —
+ * it only touches rows still missing the values. Returns how many it updated.
+ */
+export async function backfillSearchFields(
+  env: UploadEnv,
+  ctx: ActorCtx,
+): Promise<{ updated: number }> {
+  const cfg = r2Config(env);
+  const db = buildDb(env.DB);
+  const scoped = orgDb(ctx.orgId, db);
+
+  const rows = await db
+    .select({
+      id: schema.files.id,
+      kind: schema.files.kind,
+      status: schema.files.status,
+      originalName: schema.files.originalName,
+      contentType: schema.files.contentType,
+      storageKey: schema.files.storageKey,
+      category: schema.files.category,
+      contactName: schema.files.contactName,
+    })
+    .from(schema.files)
+    .where(
+      and(eq(schema.files.orgId, ctx.orgId), isNull(schema.files.deletedAt)),
+    );
+
+  let updated = 0;
+  for (const f of rows) {
+    const patch: Partial<typeof schema.files.$inferInsert> = {};
+    if (f.category == null) {
+      patch.category =
+        f.kind === "vcard"
+          ? "vcard"
+          : fileCategory(f.originalName, f.contentType, f.kind);
+    }
+    if (f.kind === "vcard" && f.contactName == null && f.status === "ready") {
+      const raw = await r2GetText(cfg, env.R2_PRIVATE_BUCKET, f.storageKey);
+      if (raw) {
+        const p = parseVcard(raw);
+        patch.contactName = p.fullName || null;
+        patch.contactOrg = p.organization || null;
+        patch.contactTitle = p.title || null;
+        patch.contactEmail = p.email || null;
+      }
+    }
+    if (Object.keys(patch).length > 0) {
+      await scoped.files.update(f.id, patch);
+      updated++;
+    }
+  }
+  return { updated };
 }
 
 /** Rename a file's display name (spec 0007 AC-4). Org-scoped; canManage; audited. */
@@ -531,6 +779,9 @@ async function publishVcard(
   });
   await r2Delete(cfg, env.R2_PRIVATE_BUCKET, session.stagingKey);
 
+  // Denormalise the contact fields so the Files list can search them in SQL
+  // (the published .vcf stays the source of truth).
+  const parsed = parseVcard(result.normalized);
   await scoped.files.update(session.fileId, {
     status: "ready",
     visibility: "public",
@@ -540,6 +791,11 @@ async function publishVcard(
     storageKey: privateKey,
     sizeBytes: normalizedSize,
     checksumSha256: checksum,
+    contactName: parsed.fullName || null,
+    contactOrg: parsed.organization || null,
+    contactTitle: parsed.title || null,
+    contactEmail: parsed.email || null,
+    category: "vcard",
   });
   await addUsage(db, orgId, normalizedSize);
   await scoped.audit.append({
