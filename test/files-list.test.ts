@@ -28,6 +28,7 @@ async function insertFile(
     category?: string;
     contactName?: string | null;
     contactOrg?: string | null;
+    contactLocation?: string | null;
     updatedAt?: Date;
   },
 ) {
@@ -48,6 +49,7 @@ async function insertFile(
     category: over.category ?? "vcard",
     contactName: over.contactName ?? null,
     contactOrg: over.contactOrg ?? null,
+    contactLocation: over.contactLocation ?? null,
     createdAt: now,
     updatedAt: over.updatedAt ?? now,
   });
@@ -141,6 +143,18 @@ describe("listFilesPage (spec 0003/0007)", () => {
     // Uploader name is "Test User" (joined) — matches every row.
     const byUploader = await listFilesPage(ENV, CTX, { q: "test user" });
     expect(byUploader.items).toHaveLength(2);
+  });
+
+  it("searches the location blob by city or either state form", async () => {
+    await insertFile("org-a", { id: "f1", contactLocation: "Bronx NY New York" });
+    await insertFile("org-a", { id: "f2", contactLocation: "Austin TX Texas" });
+
+    for (const q of ["Bronx", "NY", "New York"]) {
+      const page = await listFilesPage(ENV, CTX, { q });
+      expect(page.items.map((f) => f.id)).toEqual(["f1"]);
+    }
+    const tx = await listFilesPage(ENV, CTX, { q: "Texas" });
+    expect(tx.items.map((f) => f.id)).toEqual(["f2"]);
   });
 
   it("filters by category and status", async () => {
