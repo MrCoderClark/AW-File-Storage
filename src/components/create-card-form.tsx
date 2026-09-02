@@ -7,7 +7,7 @@ import { normalizeState, US_STATE_OPTIONS } from "@/lib/signature-brand";
 import { buildVcard, type CardFields, cardFileName } from "@/lib/vcard-builder";
 
 // The America Works regional entities a card can belong to (Organization field).
-const ORG_OPTIONS = ["America Works of New York, Inc", "America Works of New Jersey, Inc", "America Works of Washington D.C, Inc", "America Works of Maryland, Inc", "America Works of California, Inc", "America Works of Wisconsin, Inc"] as const;
+const ORG_OPTIONS = ["America Works of New York, Inc", "America Works of New Jersey, Inc", "America Works Of Pennsylvania, Inc", "America Works of Washington D.C, Inc", "America Works of Maryland, Inc", "America Works Of Tennessee, Inc", "America Works of California, Inc", "America Works of Wisconsin, Inc"] as const;
 // Every card links to the one org-wide site; the field is fixed and read-only.
 const FIXED_WEBSITE = "https://www.americaworks.com";
 
@@ -60,10 +60,10 @@ export function CreateCardForm({
   const [f, setF] = useState<CardFields>(
     initial
       ? {
-          ...initial,
-          website: FIXED_WEBSITE,
-          state: normalizeState(initial.state ?? "") || (initial.state ?? ""),
-        }
+        ...initial,
+        website: FIXED_WEBSITE,
+        state: normalizeState(initial.state ?? "") || (initial.state ?? ""),
+      }
       : EMPTY,
   );
   // Auto-fill Full name from First + Last until the user edits Full name itself.

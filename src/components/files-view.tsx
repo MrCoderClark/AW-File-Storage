@@ -25,12 +25,23 @@ export interface SerializedFile {
   sizeBytes: number;
   contentType: string;
   publicUrl?: string;
+  // Same-origin path to the public landing page for a published card (spec 0008),
+  // e.g. "/c/Jane_Doe"; undefined for private/non-vCard rows.
+  landingUrl?: string;
   uploadedByName: string;
   contactName: string | null;
   contactOrg: string | null;
   createdAt: string;
   updatedAt: string;
   canManage: boolean;
+  // Public-landing engagement (spec 0008): view/scan/download totals for a
+  // published card, or null for private/non-vCard rows with no public page.
+  stats: {
+    views: number;
+    scans: number;
+    downloads: number;
+    lastActivity: string | null;
+  } | null;
 }
 
 type Sort = "new" | "name" | "size" | "modified";
@@ -355,6 +366,7 @@ export function FilesView({
                     onClick={() => sortBy("modified")}
                   />
                   <th scope="col" className="px-4 py-2.5 font-medium">Uploaded by</th>
+                  <th scope="col" className="px-4 py-2.5 font-medium">Engagement</th>
                   <th scope="col" className="px-4 py-2.5 font-medium">Status</th>
                   <th scope="col" className="px-4 py-2.5 font-medium">
                     <span className="sr-only">Actions</span>
@@ -591,9 +603,21 @@ function FileRow({
             </span>
           ) : (
             <span className="block min-w-0">
-              <span className="block truncate font-medium text-slate-800">
-                {file.name}
-              </span>
+              {file.landingUrl ? (
+                <a
+                  href={file.landingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Open the public card page"
+                  className="block truncate font-medium text-brand-700 hover:text-brand-900 hover:underline"
+                >
+                  {file.name}
+                </a>
+              ) : (
+                <span className="block truncate font-medium text-slate-800">
+                  {file.name}
+                </span>
+              )}
               {subtitle && (
                 <span className="block truncate text-xs text-muted-500">
                   {subtitle}
@@ -612,6 +636,9 @@ function FileRow({
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-muted-500">
         {file.uploadedByName}
+      </td>
+      <td className="px-4 py-3 whitespace-nowrap">
+        <EngagementCell stats={file.stats} />
       </td>
       <td className="px-4 py-3">
         <StatusBadge file={file} />
@@ -781,6 +808,56 @@ function MenuLink({
     >
       {children}
     </Link>
+  );
+}
+
+// Compact per-card engagement (spec 0008): views, scans, downloads, each with an
+// icon + count and a tooltip. A dash for private/non-vCard rows, which have no
+// public landing page; all-zeros for a published card nobody has opened yet.
+function EngagementCell({ stats }: { stats: SerializedFile["stats"] }) {
+  if (!stats) return <span className="text-muted-400">—</span>;
+  return (
+    <span className="flex items-center gap-3 text-xs tabular-nums text-muted-500">
+      <span className="inline-flex items-center gap-1" title="Views">
+        <EyeIcon className="h-3.5 w-3.5" />
+        {stats.views}
+      </span>
+      <span className="inline-flex items-center gap-1" title="QR scans">
+        <ScanIcon className="h-3.5 w-3.5" />
+        {stats.scans}
+      </span>
+      <span className="inline-flex items-center gap-1" title="Downloads">
+        <DownloadIcon className="h-3.5 w-3.5" />
+        {stats.downloads}
+      </span>
+    </span>
+  );
+}
+
+function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden className={className}>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="2.75" />
+    </svg>
+  );
+}
+
+function ScanIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden className={className}>
+      <path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" strokeLinecap="round" />
+      <path d="M4 12h16" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function DownloadIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden className={className}>
+      <path d="M12 4v10m0 0 3.5-3.5M12 14l-3.5-3.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5 18.5h14" strokeLinecap="round" />
+    </svg>
   );
 }
 

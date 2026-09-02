@@ -20,6 +20,7 @@ This decision is large enough that it is split into an umbrella (this file, the 
 | [0005-user-management.md](0005-user-management.md) | The Members section in Settings: roster, per person detail, invitations you can send, revoke, and resend, account lifecycle (suspend, reactivate, remove, revoke sessions, reset second factor), and self service password reset | The `Auth` and `Tenancy` rows, extended to the people who administer them |
 | [0006-create-card-form.md](0006-create-card-form.md) | A Create Card form (3-step wizard) that builds a vCard from typed fields and publishes it through the existing pipeline — no `.vcf` file needed | The product goal, extending the `File storage` / publish path |
 | [0007-files-view.md](0007-files-view.md) | A dedicated Files page: browse/search/filter all files, a richer table (uploader, size, modified), and per-row + bulk management (rename, download, unpublish, delete) | The `UI` row, extending file management beyond the Upload Center |
+| [0008-public-card-landing-and-analytics.md](0008-public-card-landing-and-analytics.md) | A styled public landing page per published card (Add to contacts, tap to call, socials) plus per card view/scan/download counts, by moving `contacts.awvcard.com` onto the app Worker | The product goal and the `UI` row, extending the public vCard path with a page and engagement analytics |
 
 **Cross child contract** (rules that bind all five children together):
 
