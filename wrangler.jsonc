@@ -11,18 +11,20 @@
 	// here so `wrangler deploy` keeps it instead of removing it. The apex
 	// awvcard.com 301-redirects to www via a Cloudflare Redirect Rule (not here).
 	//
-	// spec 0008 cutover (public card landing + analytics): to move
-	// contacts.awvcard.com onto this Worker (so /c/<slug> renders the landing
-	// page and /c/<slug>.vcf is counted), the SAME hostname must first leave the
-	// R2 bucket — Cloudflare will not bind it to two things. Reversible order:
-	//   1. Verify /c/<slug> and /c/<slug>.vcf work on www.awvcard.com first.
-	//   2. R2 dashboard → aw-files-public → remove the contacts.awvcard.com custom domain.
-	//   3. Uncomment the contacts route below, then `npm run deploy`.
-	//   4. Confirm a published .vcf is byte-identical and the landing renders.
-	// Rollback: remove the route (re-comment + deploy) and re-add the R2 custom domain.
+	// spec 0008 cutover (public card landing + analytics): contacts.awvcard.com is
+	// now served by this Worker (below) instead of the R2 bucket directly, so
+	// /c/<slug> renders the landing page, /c/<slug>.vcf is counted, and /logos/*
+	// is served by the passthrough route. The SAME hostname cannot be bound to two
+	// things, so BEFORE the first deploy that carries this route you MUST remove
+	// the contacts.awvcard.com custom domain from the R2 bucket (aw-files-public),
+	// or the deploy is rejected. Reversible order:
+	//   1. R2 dashboard → aw-files-public → remove the contacts.awvcard.com custom domain.
+	//   2. `npm run deploy` (binds contacts.awvcard.com to this Worker).
+	//   3. Verify: /c/<slug>.vcf byte-identical, /c/<slug> renders, /logos/<org>/<file> loads.
+	// Rollback: re-comment the contacts route, `npm run deploy`, re-add the R2 custom domain.
 	"routes": [
-		{ "pattern": "www.awvcard.com", "custom_domain": true }
-		// , { "pattern": "contacts.awvcard.com", "custom_domain": true }  // spec 0008 cutover — see note above
+		{ "pattern": "www.awvcard.com", "custom_domain": true },
+		{ "pattern": "contacts.awvcard.com", "custom_domain": true }
 	],
 	"assets": {
 		"directory": ".open-next/assets",
