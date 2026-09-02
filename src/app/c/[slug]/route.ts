@@ -71,8 +71,14 @@ export async function GET(
     );
   };
 
+  // `preview=1` marks a staff action originating in the app (the Files-page name
+  // link, and the "Add to contacts" button on a preview) — never counted, for
+  // downloads as well as views (spec 0008).
+  const url = new URL(req.url);
+  const isPreview = url.searchParams.has("preview");
+
   if (isDownload) {
-    count("download");
+    if (!isPreview) count("download");
     return new Response(raw, {
       headers: {
         "Content-Type": "text/vcard; charset=utf-8",
@@ -83,11 +89,9 @@ export async function GET(
     });
   }
 
-  // Landing page: a QR-sourced load is a scan, a `preview=1` load is a staff
-  // preview from the Files page (not counted), otherwise a plain visitor view.
-  const url = new URL(req.url);
+  // Landing page: a QR-sourced load is a scan, a preview is not counted,
+  // otherwise a plain visitor view.
   const isScan = url.searchParams.get("src") === "qr";
-  const isPreview = url.searchParams.has("preview");
   if (!isPreview) count(isScan ? "scan" : "view");
 
   const card = parseVcard(raw);
@@ -100,7 +104,11 @@ export async function GET(
   const logoUrl = uploadedLogo ?? `${baseUrl}${logoForState(AW_SIGNATURE_BRAND, state)}`;
   const html = buildCardLandingHtml({
     card,
-    vcfUrl: `${baseUrl}/c/${slug}.vcf`,
+    // On a staff preview, keep the flag on "Add to contacts" so that download
+    // isn't counted either; a real visitor's page has the plain .vcf link.
+    vcfUrl: isPreview
+      ? `${baseUrl}/c/${slug}.vcf?preview=1`
+      : `${baseUrl}/c/${slug}.vcf`,
     qrUrl: `${baseUrl}/api/cards/${ref.fileId}/qr`,
     logoUrl,
     baseUrl,
