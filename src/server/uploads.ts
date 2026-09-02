@@ -14,6 +14,11 @@ import {
 } from "drizzle-orm";
 import { fileCategory } from "../lib/file-type";
 import { buildLocationText } from "../lib/signature-brand";
+import {
+  type CardTotals,
+  cardTotalsForFiles,
+  cardTotalsOrZero,
+} from "./card-stats";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { uuidv7 } from "./id";
@@ -251,6 +256,22 @@ export function publicUrlFor(env: UploadEnv, slug: string | null): string | unde
   return `https://${domain}/c/${slug}.vcf`;
 }
 
+/**
+ * The public landing-page URL for a slug (spec 0008), tagged `?src=qr` so a scan
+ * that lands here is counted as a scan, not a plain view. New QR codes and email
+ * signatures encode THIS (not the raw `.vcf`), so scanning opens the styled card
+ * page; the `.vcf` stays the "Add to contacts" download behind it. Already-printed
+ * QRs that encode the `.vcf` keep working (counted as downloads).
+ */
+export function landingUrlFor(
+  env: UploadEnv,
+  slug: string | null,
+): string | undefined {
+  if (!slug) return undefined;
+  const domain = env.PUBLIC_FILE_DOMAIN ?? "contacts.americaworks.com";
+  return `https://${domain}/c/${slug}?src=qr`;
+}
+
 async function addUsage(
   db: ReturnType<typeof buildDb>,
   orgId: string,
@@ -264,7 +285,7 @@ async function addUsage(
     .where(eq(schema.organization.id, orgId));
 }
 
-function publicKeyFor(slug: string): string {
+export function publicKeyFor(slug: string): string {
   return `c/${slug}.vcf`;
 }
 
@@ -285,6 +306,10 @@ export interface FileListItem {
   sizeBytes: number;
   contentType: string;
   publicUrl?: string;
+  // Same-origin path to the public landing page (spec 0008) for a published card,
+  // e.g. "/c/Jane_Doe"; undefined for private/non-vCard rows. Relative so it opens
+  // on whatever host the app is served from (www now, contacts after cutover).
+  landingUrl?: string;
   uploadedByName: string;
   // Denormalised contact fields (null for non-vCards) — shown as a subtitle and
   // searched server-side. The published .vcf remains the source of truth.
@@ -296,6 +321,10 @@ export interface FileListItem {
   // act on any file, members only on their own (spec 0004 invariant 1; the
   // server re-checks in each action). Lets the UI hide controls it must not offer.
   canManage: boolean;
+  // Public-landing engagement (spec 0008): view/scan/download totals + last
+  // activity for a published card, or null for private/non-vCard rows that have
+  // no public page. Aggregated per page from card_stat_daily.
+  stats: CardTotals | null;
 }
 
 /** How a Files-list page is sorted. "new" is the uuidv7 id (≈ upload time). */
@@ -373,12 +402,21 @@ function toListItem(
     contentType: f.contentType,
     publicUrl:
       f.visibility === "public" ? publicUrlFor(env, f.publicSlug) : undefined,
+    landingUrl:
+      f.visibility === "public" && f.kind === "vcard" && f.publicSlug
+        ? // `preview=1` marks a staff click from the Files page so the landing
+          // route serves the page without counting a view (spec 0008).
+          `/c/${f.publicSlug}?preview=1`
+        : undefined,
     uploadedByName: f.uploaderName ?? "Unknown",
     contactName: f.contactName,
     contactOrg: f.contactOrg,
     createdAt: f.createdAt,
     updatedAt: f.updatedAt,
     canManage: ctx.canManageAny || f.uploadedBy === ctx.userId,
+    // Filled in by listFilesPage after a single grouped stats query; a private or
+    // non-vCard row keeps null (it has no public landing page).
+    stats: null,
   };
 }
 
@@ -463,6 +501,10 @@ export async function listFilesPage(
 
   const q = opts.q?.trim();
   if (q) {
+    // Search the CARD's own content only (filename + denormalised contact
+    // fields), NOT the uploader's name. When one admin uploads every card, an
+    // uploader match (e.g. "Clark" in "Joe Clark") hits every row and buries the
+    // contact you searched for. Filter by uploader belongs in a separate control.
     conds.push(
       or(
         likeContains(schema.files.originalName, q),
@@ -471,7 +513,6 @@ export async function listFilesPage(
         likeContains(schema.files.contactTitle, q),
         likeContains(schema.files.contactEmail, q),
         likeContains(schema.files.contactLocation, q),
-        likeContains(schema.user.name, q),
       ),
     );
   }
@@ -516,7 +557,21 @@ export async function listFilesPage(
   const nextCursor =
     hasMore && last ? encodeCursor(sortValueOf(sort, last), last.id) : null;
 
-  return { items: page.map((f) => toListItem(env, ctx, f)), nextCursor };
+  const items = page.map((f) => toListItem(env, ctx, f));
+  // One grouped stats query for the published cards on this page (spec 0008), so
+  // each row shows its engagement without a per-row query or stored totals.
+  const cardIds = items
+    .filter((it) => it.visibility === "public" && it.kind === "vcard")
+    .map((it) => it.id);
+  if (cardIds.length > 0) {
+    const totals = await cardTotalsForFiles(env, ctx.orgId, cardIds);
+    for (const it of items) {
+      if (it.visibility === "public" && it.kind === "vcard") {
+        it.stats = cardTotalsOrZero(totals, it.id);
+      }
+    }
+  }
+  return { items, nextCursor };
 }
 
 /**

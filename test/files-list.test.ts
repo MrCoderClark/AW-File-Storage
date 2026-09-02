@@ -133,16 +133,18 @@ describe("listFilesPage (spec 0003/0007)", () => {
     expect(bySize.items.map((f) => f.sizeBytes)).toEqual([300, 200, 100]);
   });
 
-  it("searches the denormalised contact org and the uploader name", async () => {
+  it("searches the card's own content but NOT the uploader name", async () => {
     await insertFile("org-a", { id: "f1", contactOrg: "Acme Corporation" });
     await insertFile("org-a", { id: "f2", contactOrg: "Globex" });
 
     const acme = await listFilesPage(ENV, CTX, { q: "acme" });
     expect(acme.items.map((f) => f.id)).toEqual(["f1"]);
 
-    // Uploader name is "Test User" (joined) — matches every row.
+    // The uploader is "Test User", but searching it matches nothing: an uploader
+    // match would flood results when one admin uploads every card (the "clark"
+    // bug). Free-text search is scoped to the card's content only.
     const byUploader = await listFilesPage(ENV, CTX, { q: "test user" });
-    expect(byUploader.items).toHaveLength(2);
+    expect(byUploader.items).toHaveLength(0);
   });
 
   it("searches the location blob by city or either state form", async () => {

@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -207,6 +208,41 @@ export const orgSocialLinks = sqliteTable(
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("org_social_link_org_state_uq").on(t.orgId, t.state)],
+);
+
+// Per-card engagement counts for the public landing page + analytics (spec 0008).
+// A daily rollup: one row per (file, day, metric), incremented with an UPSERT on
+// each counted public hit, so growth is bounded and concurrent hits stay atomic.
+// `org_id` scopes every read to one org and cascades on org delete; the file FK
+// cascades so a hard-deleted card takes its counts with it, while unpublishing a
+// card (which does not delete the row) keeps its history. Additive table only —
+// no existing table is touched, so this migration cannot cascade-wipe (gotcha #9).
+export const cardStatDaily = sqliteTable(
+  "card_stat_daily",
+  {
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => files.id, { onDelete: "cascade" }),
+    // Activity day as "YYYY-MM-DD" in UTC.
+    date: text("date").notNull(),
+    metric: text("metric", { enum: ["view", "scan", "download"] }).notNull(),
+    count: integer("count").notNull().default(0),
+  },
+  (t) => [
+    // One row per card/day/metric; the UPSERT conflict target.
+    primaryKey({ columns: [t.fileId, t.date, t.metric] }),
+    // Org-wide Dashboard rollups over a date range.
+    index("card_stat_daily_org_date_idx").on(t.orgId, t.date),
+    // Per-card reads within an org (Files page + card detail).
+    index("card_stat_daily_org_file_idx").on(t.orgId, t.fileId),
+    check(
+      "card_stat_daily_metric_ck",
+      sql`${t.metric} in ('view','scan','download')`,
+    ),
+  ],
 );
 
 // Drives the per-account lockout in spec 0001 (AC-7). Keyed by user id.

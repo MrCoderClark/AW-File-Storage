@@ -22,6 +22,20 @@ export default async function DashboardPage() {
     { label: "Other files", value: data.distribution.other, color: "#94a3b8" },
   ];
 
+  // Dense 30-day engagement trend (the series only carries active days, so fill
+  // the gaps for a gapless chart), matching the uploads chart's shape.
+  const eng = data.engagement;
+  const engByDate = new Map(
+    eng.series.map((p) => [p.date, p.views + p.scans + p.downloads]),
+  );
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const engTrend: number[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const day = new Date(todayUtc - i * 86400000).toISOString().slice(0, 10);
+    engTrend.push(engByDate.get(day) ?? 0);
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <div>
@@ -85,6 +99,46 @@ export default async function DashboardPage() {
         </Panel>
       </div>
 
+      {/* Card engagement (spec 0008) */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Panel title="Card Engagement (Last 30 Days)" className="lg:col-span-2">
+          <div className="flex flex-wrap gap-8">
+            <Metric label="Views" value={eng.totals.views} />
+            <Metric label="Scans" value={eng.totals.scans} />
+            <Metric label="Downloads" value={eng.totals.downloads} />
+          </div>
+          <div className="mt-4">
+            <AreaChart
+              values={engTrend}
+              ariaLabel="Card views, scans, and downloads per day over the last 30 days"
+            />
+          </div>
+        </Panel>
+
+        <Panel title="Top Cards">
+          {eng.topCards.length === 0 ? (
+            <p className="text-sm text-muted-500">No card activity yet.</p>
+          ) : (
+            <ul className="space-y-2.5">
+              {eng.topCards.map((c) => (
+                <li
+                  key={c.fileId}
+                  className="flex items-center gap-3 text-sm"
+                  title={`${c.views} views · ${c.scans} scans · ${c.downloads} downloads`}
+                >
+                  <span className="min-w-0 flex-1 truncate text-slate-700">
+                    {c.name}
+                  </span>
+                  <span className="shrink-0 tabular-nums font-medium text-brand-900">
+                    {c.views + c.scans + c.downloads}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+
       {/* Recent activity */}
       <Panel title="Recent Activity">
         {data.activity.length === 0 ? (
@@ -133,6 +187,17 @@ function StatCard({
         {sub && <p className="mt-0.5 text-xs text-muted-500">{sub}</p>}
       </div>
       <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <p className="text-2xl font-semibold tabular-nums text-brand-900">
+        {value.toLocaleString()}
+      </p>
+      <p className="mt-0.5 text-xs text-muted-500">{label}</p>
     </div>
   );
 }

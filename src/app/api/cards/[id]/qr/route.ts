@@ -1,12 +1,14 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import QRCode from "qrcode";
-import { resolvePublishedCardUrl } from "@/server/signature";
+import { resolvePublishedCardLandingUrl } from "@/server/signature";
 import type { UploadEnv } from "@/server/uploads";
 
-// Hosted QR image for a published card's public URL (spec 0009). PUBLIC on
+// Hosted QR image for a published card (spec 0009, retargeted in 0008). PUBLIC on
 // purpose: an email recipient's client fetches it with no session cookie, and it
-// only ever encodes the already-public vCard address, so there's nothing to
-// gate. Returns 404 for anything that isn't a live, published card.
+// only ever encodes the already-public card address, so there's nothing to gate.
+// It now encodes the styled LANDING page URL (with ?src=qr) rather than the raw
+// `.vcf`, so scanning opens the card page and is counted as a scan. Returns 404
+// for anything that isn't a live, published card.
 export const dynamic = "force-dynamic";
 
 export async function GET(
@@ -15,7 +17,7 @@ export async function GET(
 ) {
   const { id } = await params;
   const { env } = getCloudflareContext();
-  const url = await resolvePublishedCardUrl(env as unknown as UploadEnv, id);
+  const url = await resolvePublishedCardLandingUrl(env as unknown as UploadEnv, id);
   if (!url) return new Response("Not found", { status: 404 });
 
   const cache = "public, max-age=3600";
