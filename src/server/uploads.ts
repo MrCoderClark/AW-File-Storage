@@ -250,10 +250,17 @@ export async function finalizeUpload(
   return { fileId: file.id, status: "ready", visibility: "private" };
 }
 
+// Scheme for the public domain: http for a localhost dev domain, https otherwise.
+// Lets a dev override PUBLIC_FILE_DOMAIN to "localhost:3000" and get working local
+// links instead of prod (contacts.awvcard.com) ones.
+function publicScheme(domain: string): string {
+  return /^(localhost|127\.0\.0\.1)(:|$)/.test(domain) ? "http" : "https";
+}
+
 export function publicUrlFor(env: UploadEnv, slug: string | null): string | undefined {
   if (!slug) return undefined;
   const domain = env.PUBLIC_FILE_DOMAIN ?? "contacts.americaworks.com";
-  return `https://${domain}/c/${slug}.vcf`;
+  return `${publicScheme(domain)}://${domain}/c/${slug}.vcf`;
 }
 
 /**
@@ -269,7 +276,7 @@ export function landingUrlFor(
 ): string | undefined {
   if (!slug) return undefined;
   const domain = env.PUBLIC_FILE_DOMAIN ?? "contacts.americaworks.com";
-  return `https://${domain}/c/${slug}?src=qr`;
+  return `${publicScheme(domain)}://${domain}/c/${slug}?src=qr`;
 }
 
 async function addUsage(
@@ -404,9 +411,9 @@ function toListItem(
       f.visibility === "public" ? publicUrlFor(env, f.publicSlug) : undefined,
     landingUrl:
       f.visibility === "public" && f.kind === "vcard" && f.publicSlug
-        ? // `preview=1` marks a staff click from the Files page so the landing
-          // route serves the page without counting a view (spec 0008).
-          `/c/${f.publicSlug}?preview=1`
+        ? // Same-origin link on the app host (www). The route gates /c/* on a
+          // session there and never counts it, so no flag is needed (spec 0009).
+          `/c/${f.publicSlug}`
         : undefined,
     uploadedByName: f.uploaderName ?? "Unknown",
     contactName: f.contactName,
