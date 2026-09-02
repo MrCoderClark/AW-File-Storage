@@ -54,7 +54,13 @@ export default async function DashboardPage() {
         <StatCard
           label="Storage Used"
           value={`${formatBytes(data.usage.usedBytes)}`}
-          sub={`of ${formatBytes(data.usage.quotaBytes)} · ${data.usage.pct}%`}
+          sub={`of ${formatBytes(data.usage.quotaBytes)} · ${
+            // A real but tiny usage rounds to 0% — show "<1%" so it doesn't read
+            // as "nothing used".
+            data.usage.pct === 0 && data.usage.usedBytes > 0
+              ? "<1%"
+              : `${data.usage.pct}%`
+          }`}
         >
           <div className="w-24">
             <div className="h-2 w-full overflow-hidden rounded-full bg-canvas">
