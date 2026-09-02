@@ -6,19 +6,18 @@ interface Env {
 // Standalone cron Worker: OpenNext's app worker exposes only `fetch`, so the
 // nightly sweep runs from this tiny companion worker, which calls the app's
 // bearer-authenticated cleanup endpoint on a schedule (spec 0003 AC-14).
-async function runSweep(env: Env): Promise<void> {
-  const res = await fetch(`${env.APP_URL}/api/cron/cleanup`, {
+// POST one of the app's bearer-authenticated cron endpoints. The app's proxy.ts
+// CSRF guard rejects a mutating request whose Origin host doesn't match the
+// request host, so send an Origin equal to APP_URL (also the request host here).
+async function callCron(env: Env, path: string): Promise<void> {
+  const res = await fetch(`${env.APP_URL}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.CRON_SECRET}`,
-      // The app's proxy.ts CSRF guard rejects a mutating request whose Origin
-      // host doesn't match the request host, and the `/api/cron/` path-exemption
-      // does NOT fire on the Cloudflare runtime — so send an Origin equal to
-      // APP_URL (which is also the request host here) to pass the check.
       Origin: env.APP_URL,
     },
   });
-  console.log("cleanup", res.status, await res.text());
+  console.log(path, res.status, await res.text());
 }
 
 export default {
@@ -27,6 +26,9 @@ export default {
     env: Env,
     ctx: { waitUntil(p: Promise<unknown>): void },
   ) {
-    ctx.waitUntil(runSweep(env));
+    // Nightly sweep (spec 0003) and the Office 365 reconcile (spec 0010). Each is
+    // best effort; the O365 endpoint is a no-op unless the sync is configured.
+    ctx.waitUntil(callCron(env, "/api/cron/cleanup"));
+    ctx.waitUntil(callCron(env, "/api/cron/o365-sync"));
   },
 };

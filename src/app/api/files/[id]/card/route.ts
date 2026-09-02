@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { type O365SyncEnv, triggerO365Sync } from "@/server/o365-sync";
 import { getActor } from "@/server/session";
 import { editVcard, type UploadEnv, UploadError } from "@/server/uploads";
 
@@ -33,6 +34,9 @@ export async function PATCH(
       body.vcard,
       body.name,
     );
+    // Re-sync to Office 365: the URL is unchanged, but the email (and so the
+    // matched mailbox) may have (spec 0010). Best effort, off unless configured.
+    triggerO365Sync(env as unknown as O365SyncEnv, id);
     return Response.json({ ok: true, publicUrl });
   } catch (e) {
     if (e instanceof UploadError) {
