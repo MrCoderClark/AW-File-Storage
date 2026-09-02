@@ -3,7 +3,7 @@ import { buildDb } from "./db";
 import * as schema from "./db/schema";
 import { orgDb } from "./org-db";
 import { r2GetText, type R2Config } from "./r2";
-import { publicUrlFor, type UploadEnv } from "./uploads";
+import { landingUrlFor, publicUrlFor, type UploadEnv } from "./uploads";
 import { type ParsedVcard, parseVcard } from "./vcard";
 
 /**
@@ -66,6 +66,45 @@ export async function getCardForSignature(
   };
 }
 
+export interface PublicCardRef {
+  fileId: string;
+  orgId: string;
+  slug: string;
+}
+
+/**
+ * Resolve a public slug to the published card behind it, with NO org scope — a
+ * published card is world-readable, and the public landing page + `.vcf` download
+ * (spec 0008) are served to visitors with no session. Returns the file id and its
+ * org (needed to record a hit under the right tenant) or null when the slug isn't
+ * a live, published vCard. The global-unique `public_slug` index makes this a
+ * single-row lookup.
+ */
+export async function resolveCardBySlug(
+  env: UploadEnv,
+  slug: string,
+): Promise<PublicCardRef | null> {
+  const db = buildDb(env.DB);
+  const [row] = await db
+    .select({
+      fileId: schema.files.id,
+      orgId: schema.files.orgId,
+      slug: schema.files.publicSlug,
+    })
+    .from(schema.files)
+    .where(
+      and(
+        eq(schema.files.publicSlug, slug),
+        eq(schema.files.visibility, "public"),
+        eq(schema.files.kind, "vcard"),
+        isNull(schema.files.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!row?.slug) return null;
+  return { fileId: row.fileId, orgId: row.orgId, slug: row.slug };
+}
+
 /**
  * The public URL for a published card by id, with NO org scope — a published
  * card is already world-readable, so its QR (which only encodes that URL) can be
@@ -90,4 +129,30 @@ export async function resolvePublishedCardUrl(
     .limit(1);
   if (!row?.slug) return null;
   return publicUrlFor(env, row.slug) ?? null;
+}
+
+/**
+ * The public landing-page URL for a published card by id (spec 0008), for the QR
+ * image endpoint to encode so a scan opens the styled page and is counted as a
+ * scan (`?src=qr`). No org scope — a published card is world-readable. Null if the
+ * id isn't a live, published card.
+ */
+export async function resolvePublishedCardLandingUrl(
+  env: UploadEnv,
+  fileId: string,
+): Promise<string | null> {
+  const db = buildDb(env.DB);
+  const [row] = await db
+    .select({ slug: schema.files.publicSlug })
+    .from(schema.files)
+    .where(
+      and(
+        eq(schema.files.id, fileId),
+        eq(schema.files.visibility, "public"),
+        isNull(schema.files.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!row?.slug) return null;
+  return landingUrlFor(env, row.slug) ?? null;
 }

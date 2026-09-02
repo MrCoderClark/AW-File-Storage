@@ -1,4 +1,6 @@
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { type OrgEngagement, orgEngagement } from "./card-stats";
 import { getDb } from "./db";
 import { member, user } from "./db/auth-schema";
 import * as schema from "./db/schema";
@@ -23,6 +25,10 @@ export interface DashboardData {
   };
   uploadsByDay: DayPoint[]; // last 30 days, oldest → newest
   activity: ActivityEvent[];
+  // Public-card engagement (spec 0008): view/scan/download totals, top cards, and
+  // a 30-day trend. Role-scoped like activity — org-wide for owner/admin, the
+  // caller's own cards for a member.
+  engagement: OrgEngagement;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -138,6 +144,15 @@ export async function getDashboardData(): Promise<DashboardData | null> {
     .orderBy(desc(schema.auditEvents.createdAt))
     .limit(6);
 
+  // Engagement, role-scoped exactly like Recent Activity: org-wide for
+  // owner/admin, own cards only for a member.
+  const { env } = getCloudflareContext();
+  const engagement = await orgEngagement(
+    { DB: env.DB },
+    orgId,
+    { days: 30, uploaderUserId: canManageAny ? undefined : userId },
+  );
+
   return {
     usage: { usedBytes, quotaBytes, pct },
     today,
@@ -145,6 +160,7 @@ export async function getDashboardData(): Promise<DashboardData | null> {
     totals: { files: rows.length, published },
     distribution,
     uploadsByDay,
+    engagement,
     activity: activityRows.map((r) => ({
       id: r.id,
       action: r.action,
