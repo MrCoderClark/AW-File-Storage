@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { type O365SyncEnv, triggerO365Sync } from "@/server/o365-sync";
 import { getSession } from "@/server/session";
 import { type UploadEnv, UploadError, finalizeUpload } from "@/server/uploads";
 
@@ -22,6 +23,10 @@ export async function POST(req: Request) {
       { orgId },
       body.uploadSessionId,
     );
+    // Push the new card's URL into Office 365 (spec 0010); best effort, off unless configured.
+    if (result.visibility === "public") {
+      triggerO365Sync(env as unknown as O365SyncEnv, result.fileId);
+    }
     return Response.json({ ok: true, ...result });
   } catch (e) {
     if (e instanceof UploadError) {

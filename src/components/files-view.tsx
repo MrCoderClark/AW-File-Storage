@@ -42,6 +42,8 @@ export interface SerializedFile {
     downloads: number;
     lastActivity: string | null;
   } | null;
+  // Office 365 sync status (spec 0010), or null when never synced / feature off.
+  o365SyncStatus: string | null;
 }
 
 type Sort = "new" | "name" | "size" | "modified";
@@ -641,7 +643,10 @@ function FileRow({
         <EngagementCell stats={file.stats} />
       </td>
       <td className="px-4 py-3">
-        <StatusBadge file={file} />
+        <div className="flex flex-col items-start gap-1">
+          <StatusBadge file={file} />
+          <O365Badge status={file.o365SyncStatus} />
+        </div>
       </td>
       <td className="px-4 py-3">
         <div className="flex justify-end">
@@ -887,6 +892,29 @@ function StatusBadge({ file }: { file: SerializedFile }) {
   return (
     <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`}>
       {label}
+    </span>
+  );
+}
+
+// Office 365 sync status pill (spec 0010). Shown only when there is something to
+// report: a successful sync, or an exception that needs attention. Hidden for
+// `cleared` (normal for an unpublished card) and null (never synced / feature off).
+function O365Badge({ status }: { status: string | null }) {
+  if (!status || status === "cleared") return null;
+  const map: Record<string, { text: string; cls: string }> = {
+    synced: { text: "O365 ✓", cls: "bg-emerald-100 text-emerald-700" },
+    no_match: { text: "O365: no match", cls: "bg-amber-100 text-amber-700" },
+    ambiguous: { text: "O365: ambiguous", cls: "bg-amber-100 text-amber-700" },
+    error: { text: "O365: error", cls: "bg-red-50 text-danger-600" },
+  };
+  const b = map[status];
+  if (!b) return null;
+  return (
+    <span
+      title={`Office 365 CustomAttribute1 sync: ${status}`}
+      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${b.cls}`}
+    >
+      {b.text}
     </span>
   );
 }
