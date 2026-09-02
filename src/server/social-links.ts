@@ -252,15 +252,49 @@ export async function uploadStateLogo(
     throw new SocialLinkError(413, "Logo must be between 1 byte and 1 MB.");
   }
 
+  const cfg = r2Config(env);
+  const db = buildDb(env.DB);
+  // The state's current logo, read before we overwrite the row, so an extension
+  // change (e.g. .jpg -> .png) can clean up the now-orphaned old object.
+  const [prev] = await db
+    .select({ logoUrl: orgSocialLinks.logoUrl })
+    .from(orgSocialLinks)
+    .where(and(eq(orgSocialLinks.orgId, orgId), eq(orgSocialLinks.state, key)));
+
   const objectKey = `logos/${orgId}/${key}.${ext}`;
-  await r2Put(r2Config(env), env.R2_PUBLIC_BUCKET, objectKey, bytes, {
+  await r2Put(cfg, env.R2_PUBLIC_BUCKET, objectKey, bytes, {
     "Content-Type": contentType,
     "Cache-Control": "public, max-age=300",
   });
   const domain = env.PUBLIC_FILE_DOMAIN ?? "contacts.awvcard.com";
   const logoUrl = `https://${domain}/${objectKey}?v=${Date.now()}`;
   await setStateLogoUrl(env, orgId, key, logoUrl);
+
+  // If the previous object was at a different key (the file type changed) and no
+  // other state reuses it, delete it so R2 keeps no stale logo. Guarded like
+  // clearStateLogo; the row now points at the new URL, so it can't self-match.
+  const prevPath = objectPathFromUrl(prev?.logoUrl ?? null);
+  if (prevPath && prevPath !== objectKey) {
+    const rows = await db
+      .select({ logoUrl: orgSocialLinks.logoUrl })
+      .from(orgSocialLinks)
+      .where(eq(orgSocialLinks.orgId, orgId));
+    const stillUsed = rows.some((r) => r.logoUrl?.includes(prevPath));
+    if (!stillUsed) {
+      await r2Delete(cfg, env.R2_PUBLIC_BUCKET, prevPath).catch(() => {});
+    }
+  }
   return logoUrl;
+}
+
+/** The R2 object key ("logos/<org>/<STATE>.<ext>") from a stored logo URL. */
+function objectPathFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).pathname.replace(/^\/+/, "");
+  } catch {
+    return null;
+  }
 }
 
 /**
