@@ -18,6 +18,7 @@ const ADMIN: NavItem[] = [
   { href: "/settings/members", label: "Members", match: ["/settings/members", "/settings/users"] },
   { href: "/settings/invitations", label: "Invitations" },
   { href: "/settings/social-links", label: "Regional social links" },
+  { href: "/settings/o365", label: "Office 365" },
   { href: "/settings/site", label: "Site" },
 ];
 

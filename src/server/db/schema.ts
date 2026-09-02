@@ -79,6 +79,16 @@ export const files = sqliteTable(
     // Persisted coarse type (FileCategory in lib/file-type.ts), so the Files
     // "Filter by type" control is an indexable WHERE rather than a client guess.
     category: text("category"),
+    // Office 365 sync state (spec 0010): the card's public URL is written into the
+    // matched staff member's Exchange CustomAttribute1 via Microsoft Graph. All
+    // null until a sync runs; only meaningful for published vCards.
+    o365UserId: text("o365_user_id"), // matched Graph user object id, or null
+    o365SyncedUrl: text("o365_synced_url"), // value last written (drives idempotent diffing)
+    o365SyncedAt: integer("o365_synced_at", { mode: "timestamp_ms" }),
+    o365SyncStatus: text("o365_sync_status", {
+      enum: ["synced", "cleared", "no_match", "ambiguous", "error"],
+    }),
+    o365SyncError: text("o365_sync_error"),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
     deletedBy: text("deleted_by").references(() => user.id),
     createdAt: createdAt(),
@@ -259,6 +269,12 @@ export const appSettings = sqliteTable("app_settings", {
   })
     .notNull()
     .default(true),
+  // Office 365 CustomAttribute1 sync master switch (spec 0010). Off by default;
+  // the sync also needs the GRAPH_* secrets present (graphConfigured). Toggled
+  // from Settings so it needs no redeploy.
+  o365SyncEnabled: integer("o365_sync_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
   updatedAt: updatedAt(),
 });
 
