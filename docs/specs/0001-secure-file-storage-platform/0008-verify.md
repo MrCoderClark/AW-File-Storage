@@ -23,10 +23,17 @@ _Steps derived from spec 0008 acceptance criteria. `/check verify` runs these; `
 - [ ] As a member (non-owner/admin): Dashboard engagement + `/api/cards/<id>/stats` show only your own cards; requesting another member's card stats returns 403 → AC-7, AC-8
 
 ## Cutover (operational, reversible — do last, after the www checks pass)
+The `contacts.awvcard.com` route is already active in `wrangler.jsonc`, and the Worker
+serves `/c/<slug>`, `/c/<slug>.vcf`, and `/logos/<org>/<file>` (the `app/logos/[org]/[file]`
+passthrough for admin-uploaded state logos). The one hostname cannot be on both the R2
+bucket and the Worker, so remove it from R2 **before** the deploy that carries this route.
 - [ ] R2 dashboard → `aw-files-public` → remove the `contacts.awvcard.com` custom domain
-- [ ] Uncomment the `contacts.awvcard.com` route in `wrangler.jsonc`, then `npm run deploy`
-- [ ] Confirm `https://contacts.awvcard.com/c/<slug>.vcf` is byte-identical and `.../c/<slug>` renders → AC-1, AC-2
-- [ ] Rollback if needed: re-comment the route + deploy, re-add the R2 custom domain
+- [ ] `npm run deploy` (binds `contacts.awvcard.com` to the Worker)
+- [ ] `https://contacts.awvcard.com/c/<slug>.vcf` → byte-identical vCard, `text/vcard` → AC-1
+- [ ] `https://contacts.awvcard.com/c/<slug>` → landing renders → AC-2
+- [ ] `https://contacts.awvcard.com/logos/<org>/<state>.png` → the state logo loads (test a `.png` AND the `*.png` org default)
+- [ ] Card landing + signature logos load (they reference `contacts.awvcard.com/logos/...`)
+- [ ] Rollback if needed: re-comment the `contacts.awvcard.com` route in `wrangler.jsonc`, `npm run deploy`, re-add the R2 custom domain
 
 ## Acceptance-criteria coverage
 - AC-1 (.vcf identical) … .vcf command + cutover confirm

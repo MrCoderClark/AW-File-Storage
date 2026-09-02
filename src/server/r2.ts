@@ -80,6 +80,23 @@ export async function r2GetText(
   return res.text();
 }
 
+/**
+ * Server-side GET returning the object bytes + stored content type (for serving
+ * binary public objects, e.g. state logos, through the Worker). Null on 404.
+ */
+export async function r2GetBytes(
+  cfg: R2Config,
+  bucket: string,
+  key: string,
+): Promise<{ body: ArrayBuffer; contentType: string | null } | null> {
+  const res = await client(cfg).fetch(objectUrl(cfg, bucket, key), {
+    method: "GET",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`R2 GET failed: ${res.status}`);
+  return { body: await res.arrayBuffer(), contentType: res.headers.get("content-type") };
+}
+
 /** Server-side PUT with optional response headers stored on the object. */
 export async function r2Put(
   cfg: R2Config,
