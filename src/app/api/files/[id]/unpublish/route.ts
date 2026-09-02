@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { type O365SyncEnv, triggerO365Sync } from "@/server/o365-sync";
 import { getActor } from "@/server/session";
 import { type UploadEnv, UploadError, unpublishVcard } from "@/server/uploads";
 
@@ -14,6 +15,8 @@ export async function POST(
   const { env } = getCloudflareContext();
   try {
     await unpublishVcard(env as unknown as UploadEnv, actor, id);
+    // Clear the Office 365 attribute so it stops pointing at a dead URL (spec 0010).
+    triggerO365Sync(env as unknown as O365SyncEnv, id);
     return Response.json({ ok: true });
   } catch (e) {
     if (e instanceof UploadError) {

@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { type O365SyncEnv, triggerO365Sync } from "@/server/o365-sync";
 import { getActor } from "@/server/session";
 import {
   type UploadEnv,
@@ -47,6 +48,8 @@ export async function DELETE(
   const { env } = getCloudflareContext();
   try {
     await deleteFile(env as unknown as UploadEnv, actor, id);
+    // Clear the Office 365 attribute for the now-deleted card (spec 0010).
+    triggerO365Sync(env as unknown as O365SyncEnv, id);
     return Response.json({ ok: true });
   } catch (e) {
     if (e instanceof UploadError) {

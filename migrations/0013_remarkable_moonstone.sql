@@ -1,0 +1,1 @@
+ALTER TABLE `app_settings` ADD `o365_sync_enabled` integer DEFAULT false NOT NULL;

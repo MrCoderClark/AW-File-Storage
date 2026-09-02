@@ -85,6 +85,20 @@
       "when": 1788371387735,
       "tag": "0011_fine_klaw",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788378936469,
+      "tag": "0012_right_vermin",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1788381765755,
+      "tag": "0013_remarkable_moonstone",
+      "breakpoints": true
     }
   ]
 }

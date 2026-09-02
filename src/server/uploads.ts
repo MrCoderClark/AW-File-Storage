@@ -332,6 +332,9 @@ export interface FileListItem {
   // activity for a published card, or null for private/non-vCard rows that have
   // no public page. Aggregated per page from card_stat_daily.
   stats: CardTotals | null;
+  // Office 365 sync status (spec 0010): synced/cleared/no_match/ambiguous/error,
+  // or null when never synced (or the feature is off).
+  o365SyncStatus: string | null;
 }
 
 /** How a Files-list page is sorted. "new" is the uuidv7 id (≈ upload time). */
@@ -375,6 +378,7 @@ const fileListColumns = {
   contactOrg: schema.files.contactOrg,
   createdAt: schema.files.createdAt,
   updatedAt: schema.files.updatedAt,
+  o365SyncStatus: schema.files.o365SyncStatus,
 } as const;
 
 interface FileListRow {
@@ -392,6 +396,7 @@ interface FileListRow {
   contactOrg: string | null;
   createdAt: Date;
   updatedAt: Date;
+  o365SyncStatus: string | null;
 }
 
 function toListItem(
@@ -424,6 +429,7 @@ function toListItem(
     // Filled in by listFilesPage after a single grouped stats query; a private or
     // non-vCard row keeps null (it has no public landing page).
     stats: null,
+    o365SyncStatus: f.o365SyncStatus,
   };
 }
 
