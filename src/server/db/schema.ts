@@ -245,6 +245,23 @@ export const cardStatDaily = sqliteTable(
   ],
 );
 
+// Site-wide app settings (spec 0009 follow-up). A single row (id = "app") holding
+// global toggles. Kept out of the `organization` table on purpose: a rebuild of
+// that parent table cascade-wipes children on D1 (gotcha #9), and these are
+// site-level, not per-org. Additive table, so its migration is create-only.
+export const appSettings = sqliteTable("app_settings", {
+  id: text("id").primaryKey().default("app"),
+  // When true, /c/* on the app host (www) requires a signed-in session (spec
+  // 0009). Turn off to serve card pages publicly on www too. Counting stays
+  // public-host-only regardless.
+  requireAppHostCardLogin: integer("require_app_host_card_login", {
+    mode: "boolean",
+  })
+    .notNull()
+    .default(true),
+  updatedAt: updatedAt(),
+});
+
 // Drives the per-account lockout in spec 0001 (AC-7). Keyed by user id.
 export const accountLock = sqliteTable("account_lock", {
   userId: text("user_id")

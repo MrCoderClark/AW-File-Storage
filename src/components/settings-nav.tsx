@@ -18,6 +18,7 @@ const ADMIN: NavItem[] = [
   { href: "/settings/members", label: "Members", match: ["/settings/members", "/settings/users"] },
   { href: "/settings/invitations", label: "Invitations" },
   { href: "/settings/social-links", label: "Regional social links" },
+  { href: "/settings/site", label: "Site" },
 ];
 
 export function SettingsNav({ canManage }: { canManage: boolean }) {

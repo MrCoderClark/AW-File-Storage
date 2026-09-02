@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { getAppSettings } from "@/server/app-settings";
 import { buildCardLandingHtml } from "@/lib/card-landing-html";
 import { AW_SIGNATURE_BRAND, logoForState } from "@/lib/signature-brand";
 import {
@@ -7,22 +8,26 @@ import {
   type CardMetric,
 } from "@/server/card-stats";
 import { r2GetText } from "@/server/r2";
+import { getSession } from "@/server/session";
 import { resolveCardBySlug } from "@/server/signature";
 import { getStateLogoUrl, resolveSocials } from "@/server/social-links";
 import { publicKeyFor, type UploadEnv } from "@/server/uploads";
 import { parseVcard } from "@/server/vcard";
 
-// Public serving for a published contact card (spec 0008), on the contacts host
-// (and reachable on www before the domain cutover, which is how we verify it).
+// Serving for a published contact card, split by request host (spec 0009).
 // ONE GET handler for two shapes under /c/:
-//   /c/<slug>       → the styled HTML landing page; counts a view (or a scan
-//                     when ?src=qr), so a QR that points here registers a scan.
-//   /c/<slug>.vcf   → the vCard bytes, byte-and-type identical to what R2 served
-//                     before, so every printed QR and email signature still works;
-//                     counts a download.
-// Counting is fire-and-forget via ctx.waitUntil and never blocks or fails the
-// response (AC-5). Both responses carry noindex and are not edge-cached, so every
-// hit reaches the Worker to be counted.
+//   /c/<slug>       → the styled HTML landing page (a scan when ?src=qr).
+//   /c/<slug>.vcf   → the vCard bytes, byte-and-type identical to what R2 served.
+//
+// The PUBLIC host (contacts.awvcard.com = PUBLIC_FILE_DOMAIN) serves both to
+// anyone — QR codes, email signatures, and the Office 365 .vcf link depend on it.
+// It is the only surface that COUNTS (real outside traffic).
+// The APP host (www.awvcard.com, and any other non-public host) serves /c/ only
+// as a logged-in staff preview: it requires a session (redirect to /sign-in
+// otherwise) and NEVER counts, so staff activity can't inflate the analytics.
+//
+// Counting is fire-and-forget via ctx.waitUntil and never blocks the response.
+// Both responses carry noindex and are not edge-cached.
 export const dynamic = "force-dynamic";
 
 const NOINDEX = "noindex, nofollow";
@@ -35,6 +40,24 @@ export async function GET(
   const { slug: rawSlug } = await params;
   const { env: rawEnv, ctx } = getCloudflareContext();
   const env = rawEnv as unknown as UploadEnv;
+
+  const url = new URL(req.url);
+  const publicDomain = env.PUBLIC_FILE_DOMAIN ?? "contacts.americaworks.com";
+  const isPublicHost = url.host === publicDomain;
+
+  // Gate the app host before resolving anything, so a logged-out visitor is
+  // bounced to sign-in whether or not the slug exists (no existence leak). The
+  // gate is controlled by a site setting (Settings, owner/admin) so it can be
+  // turned off to make www serve card pages publicly too (spec 0009 follow-up).
+  if (!isPublicHost) {
+    const { requireAppHostCardLogin } = await getAppSettings(env);
+    if (requireAppHostCardLogin) {
+      const session = await getSession();
+      if (!session) {
+        return Response.redirect(new URL("/sign-in", url).toString(), 302);
+      }
+    }
+  }
 
   const isDownload = rawSlug.toLowerCase().endsWith(".vcf");
   const slug = isDownload ? rawSlug.slice(0, -4) : rawSlug;
@@ -64,21 +87,17 @@ export async function GET(
 
   const userAgent = req.headers.get("user-agent");
   const countable = isCountableUserAgent(userAgent);
+  // Count only real, public-host traffic. App-host hits are logged-in staff
+  // previews (already gated above) and never count (spec 0009).
   const count = (metric: CardMetric) => {
-    if (!countable) return;
+    if (!isPublicHost || !countable) return;
     ctx.waitUntil(
       recordCardHit(env, { fileId: ref.fileId, orgId: ref.orgId, metric }),
     );
   };
 
-  // `preview=1` marks a staff action originating in the app (the Files-page name
-  // link, and the "Add to contacts" button on a preview) — never counted, for
-  // downloads as well as views (spec 0008).
-  const url = new URL(req.url);
-  const isPreview = url.searchParams.has("preview");
-
   if (isDownload) {
-    if (!isPreview) count("download");
+    count("download");
     return new Response(raw, {
       headers: {
         "Content-Type": "text/vcard; charset=utf-8",
@@ -89,10 +108,9 @@ export async function GET(
     });
   }
 
-  // Landing page: a QR-sourced load is a scan, a preview is not counted,
-  // otherwise a plain visitor view.
+  // Landing page: a QR-sourced load is a scan, otherwise a plain view.
   const isScan = url.searchParams.get("src") === "qr";
-  if (!isPreview) count(isScan ? "scan" : "view");
+  count(isScan ? "scan" : "view");
 
   const card = parseVcard(raw);
   const state = card.address.state;
@@ -104,11 +122,9 @@ export async function GET(
   const logoUrl = uploadedLogo ?? `${baseUrl}${logoForState(AW_SIGNATURE_BRAND, state)}`;
   const html = buildCardLandingHtml({
     card,
-    // On a staff preview, keep the flag on "Add to contacts" so that download
-    // isn't counted either; a real visitor's page has the plain .vcf link.
-    vcfUrl: isPreview
-      ? `${baseUrl}/c/${slug}.vcf?preview=1`
-      : `${baseUrl}/c/${slug}.vcf`,
+    // Same-host .vcf link. On the app host the whole page is a gated staff
+    // preview that never counts; on the public host it is a real download.
+    vcfUrl: `${baseUrl}/c/${slug}.vcf`,
     qrUrl: `${baseUrl}/api/cards/${ref.fileId}/qr`,
     logoUrl,
     baseUrl,
