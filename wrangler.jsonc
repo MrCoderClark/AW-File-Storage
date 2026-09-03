@@ -46,7 +46,7 @@
 	"vars": {
 		"TRUSTED_ORIGINS": "https://www.awvcard.com,https://awvcard.com,https://aw-file-storage.aw-file-storage.workers.dev",
 		"PUBLIC_FILE_DOMAIN": "contacts.awvcard.com",
-		"PLATFORM_OWNER_EMAILS": "",
+		"PLATFORM_OWNER_EMAILS": "jclark@americaworks.com",
 		"R2_ACCOUNT_ID": "25712314130a03e3364b9be5286c0eef",
 		"R2_PRIVATE_BUCKET": "aw-files-private",
 		"R2_PUBLIC_BUCKET": "aw-files-public"
