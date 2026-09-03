@@ -2,9 +2,10 @@ import { env } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock the Graph client so no real Microsoft Graph calls happen. graphConfigured
-// (reads env) and the per-org o365SyncEnabled toggle (reads org_settings) stay
-// real, so the enable/disable + per-org isolation logic is tested (spec 0012).
+// Mock the Graph client so no real Microsoft Graph calls happen. The per-org
+// credential load (org_o365, decrypted with the KEK) and the o365SyncEnabled
+// toggle (org_settings) stay real, so the per-org connect/isolation logic is
+// tested (spec 0012/0013).
 vi.mock("../src/server/graph", async (orig) => {
   const actual = (await orig()) as object;
   return {
@@ -16,21 +17,41 @@ vi.mock("../src/server/graph", async (orig) => {
 });
 
 import { buildDb } from "../src/server/db";
-import { files, organization, orgSettings, user } from "../src/server/db/schema";
+import { files, organization, orgO365, orgSettings, user } from "../src/server/db/schema";
 import * as graph from "../src/server/graph";
 import { syncCardToO365, type O365SyncEnv } from "../src/server/o365-sync";
 import { orgDb } from "../src/server/org-db";
+import { encryptSecret } from "../src/server/secret-box";
 
 const db = buildDb(env.DB);
 
-// Credentials present (so graphConfigured is true); the on/off is the DB toggle.
+// A fixed base64 32-byte KEK for the test; the sync decrypts each org's creds with it.
+const KEK = btoa("0123456789abcdef0123456789abcdef");
+
+// The KEK is present (so creds CAN be decrypted); each org still needs its OWN
+// credentials row + toggle on (spec 0013). Graph calls are mocked, so the tenant/
+// secret values here are never actually used against Microsoft.
 const BASE_ENV = {
   DB: env.DB,
   PUBLIC_FILE_DOMAIN: "contacts.awvcard.com",
-  GRAPH_TENANT_ID: "t",
-  GRAPH_CLIENT_ID: "c",
-  GRAPH_CLIENT_SECRET: "s",
+  O365_CRED_KEK: KEK,
 } as unknown as O365SyncEnv;
+
+/** Give an org its own (encrypted) client-secret credentials — "connected". */
+async function connect(orgId: string) {
+  const sealed = await encryptSecret(KEK, `${orgId}-secret`);
+  await orgDb(orgId, db).graphCreds.set({
+    tenantId: `${orgId}-tenant`,
+    clientId: `${orgId}-client`,
+    authMethod: "secret",
+    secretCt: sealed.ct,
+    secretIv: sealed.iv,
+    certKeyCt: null,
+    certKeyIv: null,
+    certThumbprint: null,
+    lastVerifiedAt: new Date(),
+  });
+}
 
 const findUsers = vi.mocked(graph.findUsersByEmail);
 const patchAttr = vi.mocked(graph.patchUserExtensionAttribute1);
@@ -85,6 +106,7 @@ beforeEach(async () => {
   findUsers.mockReset();
   patchAttr.mockReset();
   await db.delete(files);
+  await db.delete(orgO365);
   await db.delete(orgSettings);
   await db.delete(organization);
   await db.delete(user);
@@ -96,8 +118,10 @@ beforeEach(async () => {
     { id: "org-a", name: "A", slug: "org-a", createdAt: new Date() },
     { id: "org-b", name: "B", slug: "org-b", createdAt: new Date() },
   ]);
-  // Enable the per-org toggle for org-a (most tests use org-a); org-b stays off.
+  // org-a is fully connected (toggle on + its own creds); org-b is neither, until
+  // a test opts it in. Most tests use org-a.
   await orgDb("org-a", db).settings.setO365SyncEnabled(true);
+  await connect("org-a");
 });
 
 describe("syncCardToO365", () => {
@@ -110,9 +134,9 @@ describe("syncCardToO365", () => {
     expect((await readState("f1")).status).toBeNull();
   });
 
-  it("syncs only cards whose OWN org has opted in (per-org toggle, spec 0012 AC-1)", async () => {
-    // org-a is on (beforeEach); org-b is off. A card in org-b must not sync even
-    // though org-a is enabled — one org's toggle never reaches another's cards.
+  it("syncs only cards whose OWN org is connected (per-org, spec 0012/0013)", async () => {
+    // org-a is connected (beforeEach); org-b is not. A card in org-b must not sync
+    // even though org-a is — one org's connection never reaches another's cards.
     await insertCard({ id: "fb", orgId: "org-b", slug: "Bee", email: "bee@aw.com" });
     findUsers.mockResolvedValue([
       { id: "u9", mail: "bee@aw.com", userPrincipalName: "bee@aw.com", currentAttr: null },
@@ -122,13 +146,27 @@ describe("syncCardToO365", () => {
     expect(patchAttr).not.toHaveBeenCalled();
     expect((await readState("fb")).status).toBeNull();
 
-    // Turning org-b on lets its card sync.
+    // Connecting org-b (toggle on + its own creds) lets its card sync.
     await orgDb("org-b", db).settings.setO365SyncEnabled(true);
+    await connect("org-b");
     await syncCardToO365(BASE_ENV, "fb");
     expect(patchAttr).toHaveBeenCalledWith(
       expect.anything(), "u9", "https://contacts.awvcard.com/c/Bee.vcf",
     );
     expect((await readState("fb")).status).toBe("synced");
+  });
+
+  it("no-ops when the org has the toggle on but NO credentials (spec 0013 AC-4)", async () => {
+    // org-a's toggle is on (beforeEach) but clear its credentials.
+    await orgDb("org-a", db).graphCreds.clear();
+    await insertCard({ id: "f1", slug: "Jane_Doe", email: "jane@aw.com" });
+    findUsers.mockResolvedValue([
+      { id: "u1", mail: "jane@aw.com", userPrincipalName: "jane@aw.com", currentAttr: null },
+    ]);
+    await syncCardToO365(BASE_ENV, "f1");
+    expect(findUsers).not.toHaveBeenCalled();
+    expect(patchAttr).not.toHaveBeenCalled();
+    expect((await readState("f1")).status).toBeNull();
   });
 
   it("writes the card URL for a single email match (AC-1, AC-6)", async () => {

@@ -5,6 +5,7 @@ import {
   cardStatDaily,
   files,
   fileVersions,
+  orgO365,
   orgSettings,
   orgSocialLinks,
   uploadSessions,
@@ -361,6 +362,33 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     },
   };
 
+  // Per-org Office 365 credentials (spec 0013). Stores/returns the ENCRYPTED row
+  // as-is — encryption/decryption happens in the O365 layer, so the KEK never
+  // reaches this wrapper. Org-scoped like every other helper: one org can't read
+  // or overwrite another's credentials.
+  const graphCreds = {
+    async get() {
+      const rows = await db
+        .select()
+        .from(orgO365)
+        .where(eq(orgO365.orgId, orgId))
+        .limit(1);
+      return rows[0];
+    },
+    async set(data: Omit<typeof orgO365.$inferInsert, "orgId">) {
+      await db
+        .insert(orgO365)
+        .values({ ...data, orgId })
+        .onConflictDoUpdate({
+          target: orgO365.orgId,
+          set: { ...data, updatedAt: new Date() },
+        });
+    },
+    async clear() {
+      await db.delete(orgO365).where(eq(orgO365.orgId, orgId));
+    },
+  };
+
   return {
     orgId,
     files: files_,
@@ -370,6 +398,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     settings,
     socialLinks,
     cardStats,
+    graphCreds,
   };
 }
 
