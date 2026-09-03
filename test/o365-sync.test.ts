@@ -2,8 +2,9 @@ import { env } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock the Graph client so no real Microsoft Graph calls happen. graphConfigured /
-// o365SyncEnabled stay real (they read env), so the enable/disable logic is tested.
+// Mock the Graph client so no real Microsoft Graph calls happen. graphConfigured
+// (reads env) and the per-org o365SyncEnabled toggle (reads org_settings) stay
+// real, so the enable/disable + per-org isolation logic is tested (spec 0012).
 vi.mock("../src/server/graph", async (orig) => {
   const actual = (await orig()) as object;
   return {
@@ -14,11 +15,11 @@ vi.mock("../src/server/graph", async (orig) => {
   };
 });
 
-import { setO365SyncEnabled } from "../src/server/app-settings";
 import { buildDb } from "../src/server/db";
-import { appSettings, files, organization, user } from "../src/server/db/schema";
+import { files, organization, orgSettings, user } from "../src/server/db/schema";
 import * as graph from "../src/server/graph";
 import { syncCardToO365, type O365SyncEnv } from "../src/server/o365-sync";
+import { orgDb } from "../src/server/org-db";
 
 const db = buildDb(env.DB);
 
@@ -36,6 +37,7 @@ const patchAttr = vi.mocked(graph.patchUserExtensionAttribute1);
 
 async function insertCard(over: {
   id: string;
+  orgId?: string;
   slug?: string | null;
   visibility?: "private" | "public";
   deleted?: boolean;
@@ -46,7 +48,7 @@ async function insertCard(over: {
   const now = new Date();
   await db.insert(files).values({
     id: over.id,
-    orgId: "org-a",
+    orgId: over.orgId ?? "org-a",
     uploadedBy: "user-x",
     originalName: `${over.id}.vcf`,
     contentType: "text/vcard",
@@ -83,28 +85,50 @@ beforeEach(async () => {
   findUsers.mockReset();
   patchAttr.mockReset();
   await db.delete(files);
+  await db.delete(orgSettings);
   await db.delete(organization);
   await db.delete(user);
-  await db.delete(appSettings);
   await db.insert(user).values({
     id: "user-x", name: "X", email: "x@e.com", emailVerified: true,
     createdAt: new Date(), updatedAt: new Date(),
   });
-  await db.insert(organization).values({
-    id: "org-a", name: "A", slug: "org-a", createdAt: new Date(),
-  });
-  // Enable the sync via the Settings toggle for most tests.
-  await setO365SyncEnabled(BASE_ENV, true);
+  await db.insert(organization).values([
+    { id: "org-a", name: "A", slug: "org-a", createdAt: new Date() },
+    { id: "org-b", name: "B", slug: "org-b", createdAt: new Date() },
+  ]);
+  // Enable the per-org toggle for org-a (most tests use org-a); org-b stays off.
+  await orgDb("org-a", db).settings.setO365SyncEnabled(true);
 });
 
 describe("syncCardToO365", () => {
-  it("no-ops (no Graph calls) when the toggle is off (AC-7)", async () => {
+  it("no-ops (no Graph calls) when the org's toggle is off (AC-7)", async () => {
     await insertCard({ id: "f1" });
-    await setO365SyncEnabled(BASE_ENV, false); // turn the Settings toggle off
+    await orgDb("org-a", db).settings.setO365SyncEnabled(false); // turn org-a off
     await syncCardToO365(BASE_ENV, "f1");
     expect(findUsers).not.toHaveBeenCalled();
     expect(patchAttr).not.toHaveBeenCalled();
     expect((await readState("f1")).status).toBeNull();
+  });
+
+  it("syncs only cards whose OWN org has opted in (per-org toggle, spec 0012 AC-1)", async () => {
+    // org-a is on (beforeEach); org-b is off. A card in org-b must not sync even
+    // though org-a is enabled — one org's toggle never reaches another's cards.
+    await insertCard({ id: "fb", orgId: "org-b", slug: "Bee", email: "bee@aw.com" });
+    findUsers.mockResolvedValue([
+      { id: "u9", mail: "bee@aw.com", userPrincipalName: "bee@aw.com", currentAttr: null },
+    ]);
+    await syncCardToO365(BASE_ENV, "fb");
+    expect(findUsers).not.toHaveBeenCalled();
+    expect(patchAttr).not.toHaveBeenCalled();
+    expect((await readState("fb")).status).toBeNull();
+
+    // Turning org-b on lets its card sync.
+    await orgDb("org-b", db).settings.setO365SyncEnabled(true);
+    await syncCardToO365(BASE_ENV, "fb");
+    expect(patchAttr).toHaveBeenCalledWith(
+      expect.anything(), "u9", "https://contacts.awvcard.com/c/Bee.vcf",
+    );
+    expect((await readState("fb")).status).toBe("synced");
   });
 
   it("writes the card URL for a single email match (AC-1, AC-6)", async () => {
