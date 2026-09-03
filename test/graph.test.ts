@@ -1,9 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   buildClientAssertion,
-  type GraphEnv,
-  graphConfigured,
-  usesCertificate,
+  type GraphCreds,
+  graphConfiguredForOrg,
 } from "../src/server/graph";
 
 // base64url helpers for decoding the JWT in the test.
@@ -16,7 +15,7 @@ function derToPem(der: ArrayBuffer, label: string): string {
   return `-----BEGIN ${label}-----\n${b64.replace(/(.{64})/g, "$1\n")}\n-----END ${label}-----`;
 }
 
-let CERT_ENV: GraphEnv;
+let CERT_CREDS: GraphCreds;
 let keyPair: CryptoKeyPair;
 
 beforeAll(async () => {
@@ -31,34 +30,44 @@ beforeAll(async () => {
     ["sign", "verify"],
   )) as CryptoKeyPair;
   const pkcs8 = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
-  CERT_ENV = {
-    GRAPH_TENANT_ID: "11111111-1111-1111-1111-111111111111",
-    GRAPH_CLIENT_ID: "22222222-2222-2222-2222-222222222222",
-    GRAPH_CLIENT_CERT_PRIVATE_KEY: derToPem(pkcs8, "PRIVATE KEY"),
-    GRAPH_CLIENT_CERT_THUMBPRINT: "aabbccddeeff00112233445566778899aabbccdd", // 40 hex
+  CERT_CREDS = {
+    tenantId: "11111111-1111-1111-1111-111111111111",
+    clientId: "22222222-2222-2222-2222-222222222222",
+    method: "certificate",
+    certPrivateKey: derToPem(pkcs8, "PRIVATE KEY"),
+    certThumbprint: "aabbccddeeff00112233445566778899aabbccdd", // 40 hex
   };
 });
 
-describe("credential selection", () => {
-  it("usesCertificate only when both cert fields are set", () => {
-    expect(usesCertificate(CERT_ENV)).toBe(true);
-    expect(usesCertificate({ ...CERT_ENV, GRAPH_CLIENT_CERT_PRIVATE_KEY: undefined })).toBe(false);
-    expect(usesCertificate({ GRAPH_CLIENT_SECRET: "s" })).toBe(false);
-  });
-
-  it("graphConfigured accepts a certificate OR a secret, needs tenant+client", () => {
-    expect(graphConfigured(CERT_ENV)).toBe(true); // cert, no secret
+describe("per-org credential gate (spec 0013)", () => {
+  it("graphConfiguredForOrg accepts a certificate OR a secret, needs tenant+client", () => {
+    expect(graphConfiguredForOrg(CERT_CREDS)).toBe(true); // cert, no secret
     expect(
-      graphConfigured({ GRAPH_TENANT_ID: "t", GRAPH_CLIENT_ID: "c", GRAPH_CLIENT_SECRET: "s" }),
-    ).toBe(true); // secret, no cert
-    expect(graphConfigured({ GRAPH_TENANT_ID: "t", GRAPH_CLIENT_ID: "c" })).toBe(false); // neither
-    expect(graphConfigured(CERT_ENV) && !CERT_ENV.GRAPH_CLIENT_SECRET).toBe(true);
+      graphConfiguredForOrg({
+        tenantId: "t",
+        clientId: "c",
+        method: "secret",
+        secret: "s",
+      }),
+    ).toBe(true); // secret
+    // Missing the secret / cert material → not configured.
+    expect(
+      graphConfiguredForOrg({ tenantId: "t", clientId: "c", method: "secret" }),
+    ).toBe(false);
+    expect(
+      graphConfiguredForOrg({ ...CERT_CREDS, certPrivateKey: null }),
+    ).toBe(false);
+    // Missing tenant/client → not configured.
+    expect(
+      graphConfiguredForOrg({ tenantId: "", clientId: "c", method: "secret", secret: "s" }),
+    ).toBe(false);
+    expect(graphConfiguredForOrg(null)).toBe(false);
   });
 });
 
 describe("buildClientAssertion", () => {
   it("produces a well-formed, correctly-signed RS256 JWT", async () => {
-    const jwt = await buildClientAssertion(CERT_ENV);
+    const jwt = await buildClientAssertion(CERT_CREDS);
     const [h, p, sig] = jwt.split(".");
     expect(sig).toBeTruthy();
 
@@ -70,12 +79,12 @@ describe("buildClientAssertion", () => {
     expect(header.typ).toBe("JWT");
     expect(header.x5t).toMatch(/^[A-Za-z0-9_-]{27}$/);
 
-    // Payload: aud = the tenant token endpoint, iss = sub = client id, short-lived.
+    // Payload: aud = the org's tenant token endpoint, iss = sub = client id, short-lived.
     expect(payload.aud).toBe(
       "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token",
     );
-    expect(payload.iss).toBe(CERT_ENV.GRAPH_CLIENT_ID);
-    expect(payload.sub).toBe(CERT_ENV.GRAPH_CLIENT_ID);
+    expect(payload.iss).toBe(CERT_CREDS.clientId);
+    expect(payload.sub).toBe(CERT_CREDS.clientId);
     expect(payload.jti).toBeTruthy();
     expect(payload.exp).toBeGreaterThan(payload.iat);
     expect(payload.exp - payload.iat).toBeLessThanOrEqual(300);

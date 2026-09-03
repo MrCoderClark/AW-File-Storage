@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
-// Office 365 sync settings (spec 0010). Owner/admin only. Enable/disable the
-// sync, see whether the Graph credentials are configured, view a status summary,
-// and run a reconcile on demand. Credentials are Worker secrets, never shown here.
+// Office 365 sync settings (spec 0010/0013). Owner/admin only. Connect THIS org's
+// own Microsoft 365 (its own Entra app), enable/disable the sync, view a status
+// summary, and run a reconcile on demand. Secrets are encrypted server-side and
+// never shown here.
 
 interface Summary {
   synced: number;
@@ -87,12 +88,15 @@ export function O365SettingsSection() {
     <div className="max-w-2xl">
       <h1 className="text-xl font-semibold text-brand-900">Office 365</h1>
       <p className="mt-1 text-sm text-muted-500">
-        Write each published card&apos;s public link into the staff member&apos;s
-        Exchange <code className="rounded bg-canvas px-1 py-0.5 text-xs">CustomAttribute1</code>{" "}
-        via Microsoft Graph.
+        Connect your organization&apos;s own Microsoft 365 to write each published
+        card&apos;s public link into the staff member&apos;s Exchange{" "}
+        <code className="rounded bg-canvas px-1 py-0.5 text-xs">CustomAttribute1</code>{" "}
+        via Microsoft Graph. Your credentials are yours alone.
       </p>
 
-      <div className="mt-5 rounded-[--radius-panel] border border-border bg-surface p-5">
+      <ConnectionPanel onChange={load} />
+
+      <div className="mt-4 rounded-[--radius-panel] border border-border bg-surface p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-sm font-medium text-slate-800">
@@ -115,10 +119,8 @@ export function O365SettingsSection() {
 
         {state && !state.configured && (
           <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            The Microsoft Graph credentials are not set. Add the{" "}
-            <code>GRAPH_TENANT_ID</code>, <code>GRAPH_CLIENT_ID</code>, and{" "}
-            <code>GRAPH_CLIENT_SECRET</code> Worker secrets, then this toggle will
-            work.
+            Connect your organization&apos;s Microsoft 365 above before turning this
+            on.
           </p>
         )}
         {state === null && !error && (
@@ -150,6 +152,267 @@ export function O365SettingsSection() {
         </div>
       )}
     </div>
+  );
+}
+
+interface ConnStatus {
+  configured: boolean;
+  tenantId: string;
+  clientId: string;
+  method: "secret" | "certificate";
+  thumbprint: string;
+  lastVerifiedAt: number | null;
+}
+
+// Per-org Microsoft 365 connection (spec 0013): enter this org's own Entra app
+// credentials, Save & test, or Disconnect. Secrets are write-only — never shown.
+function ConnectionPanel({ onChange }: { onChange: () => void }) {
+  const [status, setStatus] = useState<ConnStatus | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [tenantId, setTenantId] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [method, setMethod] = useState<"secret" | "certificate">("secret");
+  const [secret, setSecret] = useState("");
+  const [certKey, setCertKey] = useState("");
+  const [thumbprint, setThumbprint] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [ok, setOk] = useState("");
+
+  async function loadStatus() {
+    try {
+      const res = await fetch("/api/settings/o365/credentials", { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      const body = (await res.json()) as ConnStatus;
+      setStatus(body);
+      setTenantId(body.tenantId);
+      setClientId(body.clientId);
+      setMethod(body.method);
+      setThumbprint(body.thumbprint);
+      setEditing(!body.configured);
+    } catch {
+      setError("Could not load the connection.");
+    }
+  }
+  useEffect(() => {
+    void loadStatus();
+  }, []);
+
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setOk("");
+    try {
+      const payload =
+        method === "secret"
+          ? { tenantId, clientId, method, secret }
+          : { tenantId, clientId, method, certPrivateKey: certKey, certThumbprint: thumbprint };
+      const res = await fetch("/api/settings/o365/credentials", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      if (!res.ok || !body.ok) throw new Error(body.error ?? String(res.status));
+      setOk("Connected and verified.");
+      setSecret(""); // never keep secret material in memory after a save
+      setCertKey("");
+      await loadStatus();
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not connect.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setOk("");
+    try {
+      const res = await fetch("/api/settings/o365/credentials", { method: "DELETE" });
+      if (!res.ok) throw new Error(String(res.status));
+      setTenantId("");
+      setClientId("");
+      setSecret("");
+      setCertKey("");
+      setThumbprint("");
+      await loadStatus();
+      onChange();
+    } catch {
+      setError("Could not disconnect.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const connected = status?.configured === true;
+
+  return (
+    <div className="mt-5 rounded-[--radius-panel] border border-border bg-surface p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-slate-800">Connection</p>
+          <p className="mt-1 text-sm text-muted-500">
+            Your organization&apos;s own Microsoft Entra app (tenant + client id and
+            a secret or certificate). Used only for your tenant.
+          </p>
+        </div>
+        {connected && (
+          <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+            Connected
+          </span>
+        )}
+      </div>
+
+      {connected && !editing ? (
+        <div className="mt-4 space-y-1 text-xs text-muted-500">
+          <p>
+            Tenant <span className="font-mono text-slate-700">{status?.tenantId}</span>
+          </p>
+          <p>
+            Client <span className="font-mono text-slate-700">{status?.clientId}</span>
+          </p>
+          <p>
+            Auth <span className="text-slate-700">{status?.method}</span>
+            {status?.lastVerifiedAt
+              ? ` · verified ${new Date(status.lastVerifiedAt).toLocaleString()}`
+              : ""}
+          </p>
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-canvas"
+            >
+              Update credentials
+            </button>
+            <button
+              type="button"
+              onClick={() => void disconnect()}
+              disabled={busy}
+              className="rounded-md border border-danger-600/40 px-3 py-1.5 text-sm font-medium text-danger-600 hover:bg-danger-600/[0.03] disabled:opacity-50"
+            >
+              Disconnect
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          <Field label="Directory (tenant) ID">
+            <input
+              value={tenantId}
+              onChange={(e) => setTenantId(e.target.value)}
+              disabled={busy}
+              className="w-full rounded-[--radius-panel] border border-border px-3 py-2 text-sm"
+            />
+          </Field>
+          <Field label="Application (client) ID">
+            <input
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              disabled={busy}
+              className="w-full rounded-[--radius-panel] border border-border px-3 py-2 text-sm"
+            />
+          </Field>
+          <div className="flex gap-4 text-sm">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                name="o365-method"
+                checked={method === "secret"}
+                onChange={() => setMethod("secret")}
+                disabled={busy}
+              />
+              Client secret
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                name="o365-method"
+                checked={method === "certificate"}
+                onChange={() => setMethod("certificate")}
+                disabled={busy}
+              />
+              Certificate
+            </label>
+          </div>
+          {method === "secret" ? (
+            <Field label="Client secret">
+              <input
+                type="password"
+                value={secret}
+                placeholder={connected ? "•••••••• (enter to replace)" : ""}
+                onChange={(e) => setSecret(e.target.value)}
+                disabled={busy}
+                className="w-full rounded-[--radius-panel] border border-border px-3 py-2 text-sm"
+              />
+            </Field>
+          ) : (
+            <>
+              <Field label="Certificate private key (PKCS8 PEM)">
+                <textarea
+                  value={certKey}
+                  placeholder={connected ? "(enter to replace)" : "-----BEGIN PRIVATE KEY-----"}
+                  onChange={(e) => setCertKey(e.target.value)}
+                  disabled={busy}
+                  rows={4}
+                  className="w-full rounded-[--radius-panel] border border-border px-3 py-2 font-mono text-xs"
+                />
+              </Field>
+              <Field label="Certificate thumbprint (SHA-1 hex)">
+                <input
+                  value={thumbprint}
+                  onChange={(e) => setThumbprint(e.target.value)}
+                  disabled={busy}
+                  className="w-full rounded-[--radius-panel] border border-border px-3 py-2 text-sm"
+                />
+              </Field>
+            </>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={busy || !tenantId.trim() || !clientId.trim()}
+              className="rounded-[--radius-panel] bg-brand-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {busy ? "Testing…" : "Save & test"}
+            </button>
+            {connected && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(false);
+                  setError("");
+                }}
+                disabled={busy}
+                className="rounded-[--radius-panel] border border-border px-4 py-2 text-sm font-medium text-slate-700 hover:bg-canvas"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {ok && <p className="mt-3 text-xs text-emerald-700">{ok}</p>}
+      {error && <p className="mt-3 text-xs text-danger-600">{error}</p>}
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-slate-700">{label}</span>
+      {children}
+    </label>
   );
 }
 
