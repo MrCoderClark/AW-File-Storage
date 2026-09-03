@@ -1,13 +1,10 @@
-import { and, eq, inArray } from "drizzle-orm";
 import {
   AW_SIGNATURE_BRAND,
   normalizeState,
   type Socials,
   socialsForState,
 } from "../lib/signature-brand";
-import { buildDb } from "./db";
-import { orgSocialLinks } from "./db/schema";
-import { uuidv7 } from "./id";
+import { orgDbFor } from "./org-db";
 import { r2Delete, r2Put, type R2Config } from "./r2";
 
 /**
@@ -16,8 +13,9 @@ import { r2Delete, r2Put, type R2Config } from "./r2";
  * admin-managed overrides/additions, resolved at signature time by the card's
  * state. `"*"` is the org-wide default (used when a card's state has no row).
  *
- * `org_social_link` is one of our own tables, but it's outside the `orgDb`
- * wrapper, so every query here writes its org filter explicitly.
+ * The org-scoped DB access lives in `orgDb().socialLinks` (spec 0012); this
+ * module owns the R2 logo orchestration + brand fallback and reaches the DB only
+ * through `orgDbFor`, so an org filter can't be forgotten.
  */
 
 export interface SocialLinksEnv {
@@ -73,19 +71,15 @@ export async function listSocialLinks(
   env: SocialLinksEnv,
   orgId: string,
 ): Promise<SocialLinkRow[]> {
-  const db = buildDb(env.DB);
-  return db
-    .select({
-      state: orgSocialLinks.state,
-      facebook: orgSocialLinks.facebook,
-      x: orgSocialLinks.x,
-      instagram: orgSocialLinks.instagram,
-      logoUrl: orgSocialLinks.logoUrl,
-      updatedAt: orgSocialLinks.updatedAt,
-    })
-    .from(orgSocialLinks)
-    .where(eq(orgSocialLinks.orgId, orgId))
-    .orderBy(orgSocialLinks.state);
+  const rows = await orgDbFor(orgId, env.DB).socialLinks.list();
+  return rows.map((r) => ({
+    state: r.state,
+    facebook: r.facebook,
+    x: r.x,
+    instagram: r.instagram,
+    logoUrl: r.logoUrl,
+    updatedAt: r.updatedAt,
+  }));
 }
 
 export async function upsertSocialLink(
@@ -100,15 +94,11 @@ export async function upsertSocialLink(
   const facebook = clean(input.facebook);
   const x = clean(input.x);
   const instagram = clean(input.instagram);
-  const db = buildDb(env.DB);
-  const now = new Date();
-  await db
-    .insert(orgSocialLinks)
-    .values({ id: uuidv7(), orgId, state, facebook, x, instagram, createdAt: now, updatedAt: now })
-    .onConflictDoUpdate({
-      target: [orgSocialLinks.orgId, orgSocialLinks.state],
-      set: { facebook, x, instagram, updatedAt: now },
-    });
+  await orgDbFor(orgId, env.DB).socialLinks.upsertSocials(state, {
+    facebook,
+    x,
+    instagram,
+  });
 }
 
 export async function deleteSocialLink(
@@ -118,10 +108,7 @@ export async function deleteSocialLink(
 ): Promise<void> {
   const key = normKey(state);
   if (!key) return;
-  const db = buildDb(env.DB);
-  await db
-    .delete(orgSocialLinks)
-    .where(and(eq(orgSocialLinks.orgId, orgId), eq(orgSocialLinks.state, key)));
+  await orgDbFor(orgId, env.DB).socialLinks.remove(key);
 }
 
 /**
@@ -136,11 +123,7 @@ export async function resolveSocials(
 ): Promise<Socials> {
   const abbr = normalizeState(cardState);
   const wanted = abbr ? [abbr, "*"] : ["*"];
-  const db = buildDb(env.DB);
-  const rows = await db
-    .select()
-    .from(orgSocialLinks)
-    .where(and(eq(orgSocialLinks.orgId, orgId), inArray(orgSocialLinks.state, wanted)));
+  const rows = await orgDbFor(orgId, env.DB).socialLinks.forStates(wanted);
   const pick =
     (abbr && rows.find((r) => r.state === abbr)) || rows.find((r) => r.state === "*");
   if (pick) {
@@ -164,13 +147,7 @@ export async function getStateLogoUrl(
 ): Promise<string | null> {
   const abbr = normalizeState(cardState);
   const wanted = abbr ? [abbr, "*"] : ["*"];
-  const db = buildDb(env.DB);
-  const rows = await db
-    .select({ state: orgSocialLinks.state, logoUrl: orgSocialLinks.logoUrl })
-    .from(orgSocialLinks)
-    .where(
-      and(eq(orgSocialLinks.orgId, orgId), inArray(orgSocialLinks.state, wanted)),
-    );
+  const rows = await orgDbFor(orgId, env.DB).socialLinks.forStates(wanted);
   const pick =
     (abbr && rows.find((r) => r.state === abbr && r.logoUrl)?.logoUrl) ||
     rows.find((r) => r.state === "*" && r.logoUrl)?.logoUrl;
@@ -186,15 +163,7 @@ export async function setStateLogoUrl(
 ): Promise<void> {
   const key = normKey(state);
   if (!key) throw new SocialLinkError(400, "A valid state is required.");
-  const db = buildDb(env.DB);
-  const now = new Date();
-  await db
-    .insert(orgSocialLinks)
-    .values({ id: uuidv7(), orgId, state: key, logoUrl, createdAt: now, updatedAt: now })
-    .onConflictDoUpdate({
-      target: [orgSocialLinks.orgId, orgSocialLinks.state],
-      set: { logoUrl, updatedAt: now },
-    });
+  await orgDbFor(orgId, env.DB).socialLinks.setLogoUrl(key, logoUrl);
 }
 
 /**
@@ -213,11 +182,7 @@ export async function reuseStateLogo(
   if (!key) throw new SocialLinkError(400, "A valid state is required.");
   const wanted = clean(logoUrl);
   if (!wanted) throw new SocialLinkError(400, "A logo is required.");
-  const db = buildDb(env.DB);
-  const owned = await db
-    .select({ logoUrl: orgSocialLinks.logoUrl })
-    .from(orgSocialLinks)
-    .where(eq(orgSocialLinks.orgId, orgId));
+  const owned = await orgDbFor(orgId, env.DB).socialLinks.list();
   if (!owned.some((r) => r.logoUrl === wanted)) {
     throw new SocialLinkError(400, "That logo isn't one of your uploaded logos.");
   }
@@ -253,13 +218,10 @@ export async function uploadStateLogo(
   }
 
   const cfg = r2Config(env);
-  const db = buildDb(env.DB);
+  const sl = orgDbFor(orgId, env.DB).socialLinks;
   // The state's current logo, read before we overwrite the row, so an extension
   // change (e.g. .jpg -> .png) can clean up the now-orphaned old object.
-  const [prev] = await db
-    .select({ logoUrl: orgSocialLinks.logoUrl })
-    .from(orgSocialLinks)
-    .where(and(eq(orgSocialLinks.orgId, orgId), eq(orgSocialLinks.state, key)));
+  const [prev] = await sl.forStates([key]);
 
   const objectKey = `logos/${orgId}/${key}.${ext}`;
   await r2Put(cfg, env.R2_PUBLIC_BUCKET, objectKey, bytes, {
@@ -275,10 +237,7 @@ export async function uploadStateLogo(
   // clearStateLogo; the row now points at the new URL, so it can't self-match.
   const prevPath = objectPathFromUrl(prev?.logoUrl ?? null);
   if (prevPath && prevPath !== objectKey) {
-    const rows = await db
-      .select({ logoUrl: orgSocialLinks.logoUrl })
-      .from(orgSocialLinks)
-      .where(eq(orgSocialLinks.orgId, orgId));
+    const rows = await sl.list();
     const stillUsed = rows.some((r) => r.logoUrl?.includes(prevPath));
     if (!stillUsed) {
       await r2Delete(cfg, env.R2_PUBLIC_BUCKET, prevPath).catch(() => {});
@@ -308,11 +267,7 @@ export async function clearStateLogo(
 ): Promise<void> {
   const key = normKey(state);
   if (!key) return;
-  const db = buildDb(env.DB);
-  const rows = await db
-    .select({ state: orgSocialLinks.state, logoUrl: orgSocialLinks.logoUrl })
-    .from(orgSocialLinks)
-    .where(eq(orgSocialLinks.orgId, orgId));
+  const rows = await orgDbFor(orgId, env.DB).socialLinks.list();
   const cfg = r2Config(env);
   for (const ext of Object.values(LOGO_TYPES)) {
     const objectPath = `logos/${orgId}/${key}.${ext}`;
@@ -335,11 +290,8 @@ export async function seedDefaultsFromBrand(
   env: SocialLinksEnv,
   orgId: string,
 ): Promise<number> {
-  const db = buildDb(env.DB);
-  const existing = await db
-    .select({ state: orgSocialLinks.state })
-    .from(orgSocialLinks)
-    .where(eq(orgSocialLinks.orgId, orgId));
+  const sl = orgDbFor(orgId, env.DB).socialLinks;
+  const existing = await sl.list();
   const have = new Set(existing.map((r) => r.state));
 
   const seeds: { state: string; socials: Socials }[] = [
@@ -350,19 +302,14 @@ export async function seedDefaultsFromBrand(
     })),
   ];
 
-  const now = new Date();
   let inserted = 0;
   for (const seed of seeds) {
     if (have.has(seed.state)) continue;
-    await db.insert(orgSocialLinks).values({
-      id: uuidv7(),
-      orgId,
-      state: seed.state,
+    // Guarded by `have`, so this only ever inserts (never updates an existing row).
+    await sl.upsertSocials(seed.state, {
       facebook: seed.socials.facebook ?? null,
       x: seed.socials.x ?? null,
       instagram: seed.socials.instagram ?? null,
-      createdAt: now,
-      updatedAt: now,
     });
     inserted++;
   }

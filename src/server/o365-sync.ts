@@ -1,6 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { getAppSettings } from "./app-settings";
 import { buildDb } from "./db";
 import { files } from "./db/schema";
 import {
@@ -12,10 +11,19 @@ import {
 import { orgDb } from "./org-db";
 import { publicUrlFor, type UploadEnv } from "./uploads";
 
-/** The sync runs only when the credentials are present AND the Settings toggle is on. */
-async function o365Active(env: O365SyncEnv): Promise<boolean> {
+/**
+ * The sync runs for a card only when the platform credentials are present AND
+ * that card's ORGANIZATION has opted in (spec 0012 — the O365 toggle is per-org).
+ * `graphConfigured` is the cheap global gate; the per-org toggle is read from
+ * `orgDb().settings`. A missing org row reads as off.
+ */
+async function o365EnabledForOrg(
+  env: O365SyncEnv,
+  orgId: string,
+  db = buildDb(env.DB),
+): Promise<boolean> {
   if (!graphConfigured(env)) return false;
-  return (await getAppSettings(env)).o365SyncEnabled;
+  return (await orgDb(orgId, db).settings.get()).o365SyncEnabled;
 }
 
 // Office 365 CustomAttribute1 sync (spec 0010). For one card, write its public
@@ -77,7 +85,7 @@ export async function syncCardToO365(
   env: O365SyncEnv,
   fileId: string,
 ): Promise<void> {
-  if (!(await o365Active(env))) return;
+  if (!graphConfigured(env)) return;
 
   const db = buildDb(env.DB);
   const [file] = await db
@@ -96,6 +104,8 @@ export async function syncCardToO365(
     .where(eq(files.id, fileId))
     .limit(1);
   if (!file) return;
+  // Per-org opt-in (spec 0012): the card's own org must have the toggle on.
+  if (!(await o365EnabledForOrg(env, file.orgId, db))) return;
 
   const isLive =
     file.kind === "vcard" &&
@@ -198,10 +208,12 @@ export function triggerO365Sync(env: O365SyncEnv, fileId: string): void {
 export async function reconcileO365(
   env: O365SyncEnv,
 ): Promise<{ enabled: boolean; processed: number }> {
-  if (!(await o365Active(env))) return { enabled: false, processed: 0 };
+  // `enabled` now means the platform credentials are present; whether a given
+  // card syncs is decided per-org below (spec 0012). No creds → nothing to do.
+  if (!graphConfigured(env)) return { enabled: false, processed: 0 };
   const db = buildDb(env.DB);
   const rows = await db
-    .select({ id: files.id })
+    .select({ id: files.id, orgId: files.orgId })
     .from(files)
     .where(
       and(
@@ -210,10 +222,21 @@ export async function reconcileO365(
         isNull(files.deletedAt),
       ),
     );
+  // Cache each org's toggle so a run touches org_settings once per org, not once
+  // per card. Only cards in an opted-in org are synced.
+  const enabledByOrg = new Map<string, boolean>();
+  let processed = 0;
   for (const row of rows) {
+    let enabled = enabledByOrg.get(row.orgId);
+    if (enabled === undefined) {
+      enabled = (await orgDb(row.orgId, db).settings.get()).o365SyncEnabled;
+      enabledByOrg.set(row.orgId, enabled);
+    }
+    if (!enabled) continue;
     await syncCardToO365(env, row.id);
+    processed++;
   }
-  return { enabled: true, processed: rows.length };
+  return { enabled: true, processed };
 }
 
 export interface O365Summary {

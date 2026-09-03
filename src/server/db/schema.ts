@@ -278,6 +278,26 @@ export const appSettings = sqliteTable("app_settings", {
   updatedAt: updatedAt(),
 });
 
+// Per-organization settings (spec 0012). One row per org, keyed by org_id.
+// Additive table — a create-only migration; `organization` is never rebuilt
+// (that cascade-wipes its children on D1, gotcha #9). A missing row is read as
+// the defaults. Reached only through the org-db.ts wrapper (`orgDb().settings`),
+// so a query cannot skip its org filter. Contrast `app_settings` above, which
+// stays a single platform-level row for host-level policy that is checked before
+// any card is resolved (`requireAppHostCardLogin`, spec 0012 decision).
+export const orgSettings = sqliteTable("org_settings", {
+  orgId: text("org_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  // Office 365 CustomAttribute1 sync opt-in for THIS org's cards (spec 0010/0012).
+  // Off by default; the sync also needs the platform GRAPH_* secrets present —
+  // `graphConfigured` gates the feature globally, this toggle opts an org in.
+  o365SyncEnabled: integer("o365_sync_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  updatedAt: updatedAt(),
+});
+
 // Drives the per-account lockout in spec 0001 (AC-7). Keyed by user id.
 export const accountLock = sqliteTable("account_lock", {
   userId: text("user_id")

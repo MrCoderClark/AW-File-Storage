@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 // domain (contacts) is always public and unaffected.
 export function SiteSettingsSection() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [canEdit, setCanEdit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -17,8 +18,10 @@ export function SiteSettingsSection() {
         if (!res.ok) throw new Error(String(res.status));
         const body = (await res.json()) as {
           settings: { requireAppHostCardLogin: boolean };
+          canEdit?: boolean;
         };
         setEnabled(body.settings.requireAppHostCardLogin);
+        setCanEdit(Boolean(body.canEdit));
       } catch {
         setError("Could not load site settings.");
       }
@@ -71,11 +74,16 @@ export function SiteSettingsSection() {
           </div>
           <Switch
             checked={enabled === true}
-            disabled={enabled === null || saving}
+            disabled={enabled === null || saving || !canEdit}
             onChange={toggle}
             label="Require sign-in for card pages on the app site"
           />
         </div>
+        {enabled !== null && !canEdit && (
+          <p className="mt-3 text-xs text-muted-500">
+            This is a platform-wide setting; only the app owner can change it.
+          </p>
+        )}
         {enabled === null && !error && (
           <p className="mt-3 text-xs text-muted-500">Loading…</p>
         )}

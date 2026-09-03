@@ -1,7 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { buildDb } from "@/server/db";
 import { cardStatDetail } from "@/server/card-stats";
-import { orgDb } from "@/server/org-db";
+import { orgDbFor } from "@/server/org-db";
 import { getActor } from "@/server/session";
 import type { UploadEnv } from "@/server/uploads";
 
@@ -23,7 +22,7 @@ export async function GET(
   const uploadEnv = env as unknown as UploadEnv;
 
   // Org scope: a file in another org is indistinguishable from one that is absent.
-  const scoped = orgDb(actor.orgId, buildDb(uploadEnv.DB));
+  const scoped = orgDbFor(actor.orgId, uploadEnv.DB);
   const file = await scoped.files.get(id);
   if (!file || file.deletedAt) {
     return Response.json({ ok: false }, { status: 404 });
