@@ -11,16 +11,30 @@ export interface GraphEnv {
   GRAPH_TENANT_ID?: string;
   GRAPH_CLIENT_ID?: string;
   GRAPH_CLIENT_SECRET?: string;
+  // Certificate auth (spec 0011), preferred over the secret when both are set.
+  // Private key as a PKCS8 PEM; thumbprint as the cert's SHA-1 fingerprint (hex
+  // from `openssl x509 -fingerprint -sha1`, or an already-base64url value).
+  GRAPH_CLIENT_CERT_PRIVATE_KEY?: string;
+  GRAPH_CLIENT_CERT_THUMBPRINT?: string;
+}
+
+/** True when a certificate (private key + thumbprint) is configured. */
+export function usesCertificate(env: GraphEnv): boolean {
+  return Boolean(
+    env.GRAPH_CLIENT_CERT_PRIVATE_KEY && env.GRAPH_CLIENT_CERT_THUMBPRINT,
+  );
 }
 
 /**
- * True when the three Graph credentials are present. The sync also needs the
- * Settings toggle on (see o365-sync.ts `o365Active`); credentials gate, the
- * toggle switches.
+ * True when Graph can authenticate: the tenant + client id, plus EITHER a
+ * certificate OR a client secret (spec 0011). The sync also needs the Settings
+ * toggle on (see o365-sync.ts `o365Active`); credentials gate, the toggle switches.
  */
 export function graphConfigured(env: GraphEnv): boolean {
   return Boolean(
-    env.GRAPH_TENANT_ID && env.GRAPH_CLIENT_ID && env.GRAPH_CLIENT_SECRET,
+    env.GRAPH_TENANT_ID &&
+      env.GRAPH_CLIENT_ID &&
+      (usesCertificate(env) || env.GRAPH_CLIENT_SECRET),
   );
 }
 
@@ -47,21 +61,119 @@ function odata(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+// --- Certificate client assertion (spec 0011), all via Web Crypto ---
+
+const CLIENT_ASSERTION_TYPE =
+  "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
+/** base64url (no padding) of raw bytes. */
+function b64url(data: ArrayBuffer | Uint8Array): string {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** base64url of a JSON object (JWT header/payload). */
+function b64urlJson(obj: unknown): string {
+  return b64url(new TextEncoder().encode(JSON.stringify(obj)));
+}
+
+/** Strip a PEM's header/footer and base64-decode the body to DER bytes. */
+function pemToDer(pem: string): ArrayBuffer {
+  const body = pem
+    .replace(/-----BEGIN [^-]+-----/g, "")
+    .replace(/-----END [^-]+-----/g, "")
+    .replace(/\s+/g, "");
+  const bin = atob(body);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+/**
+ * The `x5t` header value: base64url of the cert's raw SHA-1 thumbprint. Accepts
+ * the openssl hex fingerprint (with or without colons) or an already-base64url
+ * value.
+ */
+function thumbprintToX5t(value: string): string {
+  const cleaned = value.replace(/[:\s]/g, "");
+  if (/^[0-9a-fA-F]{40}$/.test(cleaned)) {
+    const bytes = new Uint8Array(
+      (cleaned.match(/../g) ?? []).map((h) => Number.parseInt(h, 16)),
+    );
+    return b64url(bytes);
+  }
+  return value.trim();
+}
+
+// The imported signing key is cached at module scope (the PEM is stable).
+let signingKeyCache: CryptoKey | null = null;
+
+async function getSigningKey(pem: string): Promise<CryptoKey> {
+  if (signingKeyCache) return signingKeyCache;
+  signingKeyCache = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToDer(pem),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return signingKeyCache;
+}
+
+/**
+ * Build a signed JWT client assertion for the client-credentials flow (spec
+ * 0011). Signed RS256 with the cert's private key via Web Crypto.
+ */
+export async function buildClientAssertion(env: GraphEnv): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const header = {
+    alg: "RS256",
+    typ: "JWT",
+    x5t: thumbprintToX5t(env.GRAPH_CLIENT_CERT_THUMBPRINT ?? ""),
+  };
+  const payload = {
+    aud: `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`,
+    iss: env.GRAPH_CLIENT_ID,
+    sub: env.GRAPH_CLIENT_ID,
+    jti: crypto.randomUUID(),
+    iat: now,
+    nbf: now,
+    exp: now + 300,
+  };
+  const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
+  const key = await getSigningKey(env.GRAPH_CLIENT_CERT_PRIVATE_KEY ?? "");
+  const sig = await crypto.subtle.sign(
+    { name: "RSASSA-PKCS1-v1_5" },
+    key,
+    new TextEncoder().encode(signingInput),
+  );
+  return `${signingInput}.${b64url(sig)}`;
+}
+
 async function getToken(env: GraphEnv): Promise<string> {
   if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) {
     return tokenCache.token;
+  }
+  // Prefer the certificate (client assertion) when configured; else the secret.
+  const body = new URLSearchParams({
+    client_id: env.GRAPH_CLIENT_ID ?? "",
+    scope: "https://graph.microsoft.com/.default",
+    grant_type: "client_credentials",
+  });
+  if (usesCertificate(env)) {
+    body.set("client_assertion_type", CLIENT_ASSERTION_TYPE);
+    body.set("client_assertion", await buildClientAssertion(env));
+  } else {
+    body.set("client_secret", env.GRAPH_CLIENT_SECRET ?? "");
   }
   const res = await fetch(
     `https://login.microsoftonline.com/${env.GRAPH_TENANT_ID}/oauth2/v2.0/token`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: env.GRAPH_CLIENT_ID ?? "",
-        client_secret: env.GRAPH_CLIENT_SECRET ?? "",
-        scope: "https://graph.microsoft.com/.default",
-        grant_type: "client_credentials",
-      }),
+      body,
     },
   );
   if (!res.ok) {
