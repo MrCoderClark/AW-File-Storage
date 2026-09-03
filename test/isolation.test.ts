@@ -5,6 +5,7 @@ import {
   cardStatDaily,
   files,
   organization,
+  orgO365,
   orgSettings,
   orgSocialLinks,
   user,
@@ -33,6 +34,7 @@ function newFileInput(name: string, checksum: string) {
 beforeEach(async () => {
   await db.delete(cardStatDaily);
   await db.delete(orgSocialLinks);
+  await db.delete(orgO365);
   await db.delete(orgSettings);
   await db.delete(files);
   await db.delete(organization);
@@ -157,5 +159,22 @@ describe("isolation extends to the folded tables (spec 0012)", () => {
     // org-a sees its own card's counts.
     const own = await orgDb("org-a", db).cardStats.totalsForFiles([aFile.id]);
     expect(own).toHaveLength(1);
+  });
+
+  it("Office 365 credentials are scoped to their org (spec 0013)", async () => {
+    await orgDb("org-a", db).graphCreds.set({
+      tenantId: "tenant-a",
+      clientId: "client-a",
+      authMethod: "secret",
+      secretCt: "ct-a",
+      secretIv: "iv-a",
+      certKeyCt: null,
+      certKeyIv: null,
+      certThumbprint: null,
+      lastVerifiedAt: new Date(),
+    });
+    // org-a sees its own row; org-b sees nothing (never another org's credentials).
+    expect((await orgDb("org-a", db).graphCreds.get())?.tenantId).toBe("tenant-a");
+    expect(await orgDb("org-b", db).graphCreds.get()).toBeUndefined();
   });
 });
