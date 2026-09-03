@@ -18,6 +18,11 @@ import { twoFactor } from "better-auth/plugins/two-factor";
 // tenancy tables spec 0002 builds on); `twoFactor` owns TOTP + backup codes.
 export const authPlugins = [
   organization({
+    // Organization creation is NOT open to any signed-in user (spec 0012): it is
+    // restricted to the platform ("app") owner, enforced by our own gated route
+    // (`POST /api/organization` → isPlatformOwner). Disabling the plugin's own
+    // create endpoint here closes the only path that would bypass that gate.
+    allowUserToCreateOrganization: false,
     // Storage accounting lives on the organization row (spec 0002). These are
     // server-managed (input: false), so no client can set them.
     schema: {
