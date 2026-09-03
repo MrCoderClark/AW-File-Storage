@@ -27,8 +27,9 @@ export function usesCertificate(env: GraphEnv): boolean {
 
 /**
  * True when Graph can authenticate: the tenant + client id, plus EITHER a
- * certificate OR a client secret (spec 0011). The sync also needs the Settings
- * toggle on (see o365-sync.ts `o365Active`); credentials gate, the toggle switches.
+ * certificate OR a client secret (spec 0011). This is the platform-level gate;
+ * a card also needs its OWN org's O365 toggle on (spec 0012, see
+ * o365-sync.ts `o365EnabledForOrg`). Credentials gate, the per-org toggle switches.
  */
 export function graphConfigured(env: GraphEnv): boolean {
   return Boolean(

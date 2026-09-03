@@ -6,10 +6,32 @@ import { authPlugins, authSharedOptions } from "./auth-options";
 import { type AuthEnv } from "./auth";
 import { buildDb } from "./db";
 import * as schema from "./db/schema";
-import { linkEmail, sendEmail } from "./email";
+import { inviteEmail, sendEmail } from "./email";
 import { uuidv7 } from "./id";
 
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (spec 0001 AC-10)
+const INVITE_TTL_DAYS = 7; // spec 0001 AC-10
+const INVITE_TTL_MS = INVITE_TTL_DAYS * 24 * 60 * 60 * 1000;
+
+/** Who invited them and to what, for the invitation email. One round trip. */
+async function inviteContext(
+  db: ReturnType<typeof buildDb>,
+  inviterId: string,
+  orgId: string,
+): Promise<{ inviterName?: string; orgName?: string }> {
+  const [inviter, org] = await db.batch([
+    db
+      .select({ name: schema.user.name })
+      .from(schema.user)
+      .where(eq(schema.user.id, inviterId))
+      .limit(1),
+    db
+      .select({ name: schema.organization.name })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, orgId))
+      .limit(1),
+  ]);
+  return { inviterName: inviter[0]?.name, orgName: org[0]?.name };
+}
 
 export type InviteRole = "admin" | "member";
 
@@ -108,12 +130,19 @@ export async function createInvite(opts: {
   });
 
   const url = `${env.APP_URL}/accept-invitation/${id}`;
+  const { inviterName, orgName } = await inviteContext(db, inviterId, orgId);
   await sendEmail(
     { apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM ?? "no-reply@americaworks.com" },
     {
       to: email,
       subject: "You're invited to AW File Storage",
-      html: linkEmail("You've been invited. Set a password to join:", url, "Accept invitation"),
+      html: inviteEmail({
+        url,
+        role,
+        inviterName,
+        orgName,
+        expiresInDays: INVITE_TTL_DAYS,
+      }),
     },
   );
 
@@ -279,12 +308,20 @@ export async function resendInvitation(opts: {
   });
 
   const url = `${env.APP_URL}/accept-invitation/${id}`;
+  const { inviterName, orgName } = await inviteContext(db, actorUserId, orgId);
   await sendEmail(
     { apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM ?? "no-reply@americaworks.com" },
     {
       to: inv.email,
       subject: "Your invitation to AW File Storage",
-      html: linkEmail("Your invitation was resent. Set a password to join:", url, "Accept invitation"),
+      html: inviteEmail({
+        url,
+        role: (inv.role ?? "member") as InviteRole,
+        inviterName,
+        orgName,
+        expiresInDays: INVITE_TTL_DAYS,
+        resent: true,
+      }),
     },
   );
   return { id };

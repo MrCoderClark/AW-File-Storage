@@ -1,11 +1,15 @@
-import { and, desc, eq, isNull, type SQL } from "drizzle-orm";
-import { getDb, type Db } from "./db";
+import { and, desc, eq, gte, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { buildDb, getDb, type Db } from "./db";
 import {
   auditEvents,
+  cardStatDaily,
   files,
   fileVersions,
+  orgSettings,
+  orgSocialLinks,
   uploadSessions,
 } from "./db/schema";
+import { uuidv7 } from "./id";
 
 /**
  * Thrown when a tenant-table operation is attempted with no organization in
@@ -156,7 +160,230 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     },
   };
 
-  return { orgId, files: files_, versions, uploads, audit };
+  // Per-org settings (spec 0012). A missing row reads as the defaults; writes
+  // upsert the single row for this org. Constrained to `orgId` like every other
+  // helper here, so one org can never read or change another's settings.
+  const settings = {
+    async get(): Promise<{ o365SyncEnabled: boolean }> {
+      const rows = await db
+        .select({ o365SyncEnabled: orgSettings.o365SyncEnabled })
+        .from(orgSettings)
+        .where(eq(orgSettings.orgId, orgId))
+        .limit(1);
+      return { o365SyncEnabled: rows[0]?.o365SyncEnabled ?? false };
+    },
+    async setO365SyncEnabled(value: boolean) {
+      await db
+        .insert(orgSettings)
+        .values({ orgId, o365SyncEnabled: value, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: orgSettings.orgId,
+          set: { o365SyncEnabled: value, updatedAt: new Date() },
+        });
+    },
+  };
+
+  // Per-state social links for signatures/landing pages (spec 0009). Owns only
+  // the org-scoped DB access; the R2 logo orchestration + brand fallback stay in
+  // social-links.ts, which calls these. Returns full rows so the caller can pick
+  // whatever columns it needs.
+  const socialLinks = {
+    /** Every state row for this org, ordered by state. */
+    async list() {
+      return db
+        .select()
+        .from(orgSocialLinks)
+        .where(eq(orgSocialLinks.orgId, orgId))
+        .orderBy(orgSocialLinks.state);
+    },
+    /** Rows for the given states (e.g. an exact state plus the "*" default). */
+    async forStates(states: string[]) {
+      if (states.length === 0) return [];
+      return db
+        .select()
+        .from(orgSocialLinks)
+        .where(
+          and(
+            eq(orgSocialLinks.orgId, orgId),
+            inArray(orgSocialLinks.state, states),
+          ),
+        );
+    },
+    /** Upsert the social URLs on a state's row (leaves the logo untouched). */
+    async upsertSocials(
+      state: string,
+      v: {
+        facebook: string | null;
+        x: string | null;
+        instagram: string | null;
+      },
+    ) {
+      const now = new Date();
+      await db
+        .insert(orgSocialLinks)
+        .values({ id: uuidv7(), orgId, state, ...v, createdAt: now, updatedAt: now })
+        .onConflictDoUpdate({
+          target: [orgSocialLinks.orgId, orgSocialLinks.state],
+          set: { ...v, updatedAt: now },
+        });
+    },
+    /** Upsert just the logo URL on a state's row (leaves the socials untouched). */
+    async setLogoUrl(state: string, logoUrl: string | null) {
+      const now = new Date();
+      await db
+        .insert(orgSocialLinks)
+        .values({ id: uuidv7(), orgId, state, logoUrl, createdAt: now, updatedAt: now })
+        .onConflictDoUpdate({
+          target: [orgSocialLinks.orgId, orgSocialLinks.state],
+          set: { logoUrl, updatedAt: now },
+        });
+    },
+    async remove(state: string) {
+      await db
+        .delete(orgSocialLinks)
+        .where(
+          and(eq(orgSocialLinks.orgId, orgId), eq(orgSocialLinks.state, state)),
+        );
+    },
+  };
+
+  // Per-card engagement rollup (spec 0008). Owns only the org-scoped SQL (each
+  // read constrained to this org; the top/engagement joins to `file` stay inside
+  // the org too); the aggregation/shaping into totals + series stays in
+  // card-stats.ts, which calls these.
+  const cardStats = {
+    /** Bump the (file, day, metric) counter by one (atomic upsert). */
+    async recordHit(fileId: string, date: string, metric: CardMetric) {
+      await db
+        .insert(cardStatDaily)
+        .values({ orgId, fileId, date, metric, count: 1 })
+        .onConflictDoUpdate({
+          target: [cardStatDaily.fileId, cardStatDaily.date, cardStatDaily.metric],
+          set: { count: sql`${cardStatDaily.count} + 1` },
+        });
+    },
+    /** Per-file totals for a set of file ids: sum + last day, grouped. */
+    async totalsForFiles(fileIds: string[]) {
+      if (fileIds.length === 0) {
+        return [] as {
+          fileId: string;
+          metric: string;
+          total: number;
+          lastDate: string;
+        }[];
+      }
+      return db
+        .select({
+          fileId: cardStatDaily.fileId,
+          metric: cardStatDaily.metric,
+          total: sql<number>`sum(${cardStatDaily.count})`,
+          lastDate: sql<string>`max(${cardStatDaily.date})`,
+        })
+        .from(cardStatDaily)
+        .where(
+          and(
+            eq(cardStatDaily.orgId, orgId),
+            inArray(cardStatDaily.fileId, fileIds),
+          ),
+        )
+        .groupBy(cardStatDaily.fileId, cardStatDaily.metric);
+    },
+    /** Daily (date, metric) sums for one card within a window. */
+    async detailRows(fileId: string, since: string) {
+      return db
+        .select({
+          date: cardStatDaily.date,
+          metric: cardStatDaily.metric,
+          total: sql<number>`sum(${cardStatDaily.count})`,
+        })
+        .from(cardStatDaily)
+        .where(
+          and(
+            eq(cardStatDaily.orgId, orgId),
+            eq(cardStatDaily.fileId, fileId),
+            gte(cardStatDaily.date, since),
+          ),
+        )
+        .groupBy(cardStatDaily.date, cardStatDaily.metric);
+    },
+    /** Org-wide daily (date, metric) sums, optionally scoped to one uploader. */
+    async engagementRows(opts: { since: string; uploaderUserId?: string }) {
+      const scope = and(
+        eq(cardStatDaily.orgId, orgId),
+        gte(cardStatDaily.date, opts.since),
+        opts.uploaderUserId ? eq(files.uploadedBy, opts.uploaderUserId) : undefined,
+      );
+      const cols = {
+        date: cardStatDaily.date,
+        metric: cardStatDaily.metric,
+        total: sql<number>`sum(${cardStatDaily.count})`,
+      };
+      if (opts.uploaderUserId) {
+        return db
+          .select(cols)
+          .from(cardStatDaily)
+          .innerJoin(files, eq(files.id, cardStatDaily.fileId))
+          .where(scope)
+          .groupBy(cardStatDaily.date, cardStatDaily.metric);
+      }
+      return db
+        .select(cols)
+        .from(cardStatDaily)
+        .where(scope)
+        .groupBy(cardStatDaily.date, cardStatDaily.metric);
+    },
+    /** Highest-engagement cards (name + slug + per-metric sums), most hits first. */
+    async topCards(opts: {
+      since: string;
+      uploaderUserId?: string;
+      limit: number;
+    }) {
+      const scope = and(
+        eq(cardStatDaily.orgId, orgId),
+        gte(cardStatDaily.date, opts.since),
+        opts.uploaderUserId ? eq(files.uploadedBy, opts.uploaderUserId) : undefined,
+      );
+      return db
+        .select({
+          fileId: cardStatDaily.fileId,
+          name: files.originalName,
+          slug: files.publicSlug,
+          views: sql<number>`sum(case when ${cardStatDaily.metric} = 'view' then ${cardStatDaily.count} else 0 end)`,
+          scans: sql<number>`sum(case when ${cardStatDaily.metric} = 'scan' then ${cardStatDaily.count} else 0 end)`,
+          downloads: sql<number>`sum(case when ${cardStatDaily.metric} = 'download' then ${cardStatDaily.count} else 0 end)`,
+        })
+        .from(cardStatDaily)
+        .innerJoin(files, eq(files.id, cardStatDaily.fileId))
+        .where(scope)
+        .groupBy(cardStatDaily.fileId, files.originalName, files.publicSlug)
+        .orderBy(desc(sql`sum(${cardStatDaily.count})`))
+        .limit(opts.limit);
+    },
+  };
+
+  return {
+    orgId,
+    files: files_,
+    versions,
+    uploads,
+    audit,
+    settings,
+    socialLinks,
+    cardStats,
+  };
+}
+
+/** The metric values counted per card (spec 0008). */
+export type CardMetric = "view" | "scan" | "download";
+
+/**
+ * Build an org-scoped client straight from a D1 binding, for the modules that
+ * own complex queries over a tenant table (card stats, social links) and receive
+ * an `env` rather than running inside the request's ambient client. Keeps those
+ * modules off the raw `./db` import — they reach tenant data only through here.
+ */
+export function orgDbFor(orgId: string, d1: D1Database): OrgDb {
+  return orgDb(orgId, buildDb(d1));
 }
 
 export type OrgDb = ReturnType<typeof orgDb>;

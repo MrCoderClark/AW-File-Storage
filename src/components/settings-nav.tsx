@@ -14,6 +14,7 @@ const BASE: NavItem[] = [
 ];
 
 const ADMIN: NavItem[] = [
+  { href: "/settings/organization", label: "Organization" },
   // The member detail page lives at /settings/users/[id]; keep Members lit there.
   { href: "/settings/members", label: "Members", match: ["/settings/members", "/settings/users"] },
   { href: "/settings/invitations", label: "Invitations" },
