@@ -16,15 +16,16 @@ _Steps derived from spec 0011 acceptance criteria. `/check verify` runs these; `
   ```bash
   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 730 -nodes -subj "/CN=aw-file-storage-graph"
   openssl pkcs8 -topk8 -nocrypt -in key.pem -out key.pk8.pem
-  openssl x509 -in cert.pem -fingerprint -sha1 -noout   # the hex thumbprint
+  openssl x509 -in cert.pem -fingerprint -sha1 -noout   # prints: sha1 Fingerprint=AB:CD:...
   ```
 - [ ] Entra → the app registration → **Certificates & secrets → Certificates → Upload** `cert.pem`.
 - [ ] Set Worker secrets:
   ```bash
   npx wrangler secret put GRAPH_CLIENT_CERT_PRIVATE_KEY   # paste the contents of key.pk8.pem
-  npx wrangler secret put GRAPH_CLIENT_CERT_THUMBPRINT    # the SHA-1 fingerprint hex (colons OK)
+  npx wrangler secret put GRAPH_CLIENT_CERT_THUMBPRINT    # ONLY the hex after the "=", e.g. AB:CD:EF:... (colons OK, NO "sha1 Fingerprint=" prefix)
   npm run deploy
   ```
+  > **Gotcha:** the thumbprint secret must be **only** the 40-hex string. `graph.ts` recognizes a clean hex value (colons/spaces stripped) and converts it to the base64url `x5t`; anything else (e.g. the whole `sha1 Fingerprint=...` line) is passed through verbatim as a bad `x5t`, and every token request fails with **401** (`Graph token request failed: 401` on every card). Paste the characters after the `=` only.
 - [ ] Verify: the app now signs in with the cert (a card sync still writes CustomAttribute1). → AC-1
 - [ ] Rollback: unset the two cert secrets → the app falls back to the secret. → AC-6
 
