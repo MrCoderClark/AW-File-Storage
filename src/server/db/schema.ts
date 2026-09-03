@@ -269,9 +269,9 @@ export const appSettings = sqliteTable("app_settings", {
   })
     .notNull()
     .default(true),
-  // Office 365 CustomAttribute1 sync master switch (spec 0010). Off by default;
-  // the sync also needs the GRAPH_* secrets present (graphConfigured). Toggled
-  // from Settings so it needs no redeploy.
+  // DEPRECATED (spec 0012): the O365 sync toggle moved to org_settings (per-org).
+  // This column is unused and kept only until app_settings is dropped in a later
+  // migration; do not read or write it.
   o365SyncEnabled: integer("o365_sync_enabled", { mode: "boolean" })
     .notNull()
     .default(false),
@@ -290,11 +290,36 @@ export const orgSettings = sqliteTable("org_settings", {
     .primaryKey()
     .references(() => organization.id, { onDelete: "cascade" }),
   // Office 365 CustomAttribute1 sync opt-in for THIS org's cards (spec 0010/0012).
-  // Off by default; the sync also needs the platform GRAPH_* secrets present —
-  // `graphConfigured` gates the feature globally, this toggle opts an org in.
+  // Off by default; the sync also needs the org's OWN Entra credentials configured
+  // (spec 0013, org_o365). Credentials gate (graphConfiguredForOrg), toggle switches.
   o365SyncEnabled: integer("o365_sync_enabled", { mode: "boolean" })
     .notNull()
     .default(false),
+  updatedAt: updatedAt(),
+});
+
+// Per-organization Office 365 / Microsoft Graph credentials (spec 0013). Each org
+// brings its OWN Entra app, so its cards sync into its OWN Microsoft tenant and no
+// credential is ever global or shared. The client secret / certificate private key
+// are stored ENCRYPTED (AES-GCM with the O365_CRED_KEK Worker secret — see
+// secret-box.ts), never plaintext; tenant id, client id, and thumbprint are not
+// secret. Additive create-only table (never rebuild `organization`, gotcha #9).
+// Reached only through orgDb().graphCreds, so one org can't read another's.
+export const orgO365 = sqliteTable("org_o365", {
+  orgId: text("org_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  tenantId: text("tenant_id").notNull(),
+  clientId: text("client_id").notNull(),
+  authMethod: text("auth_method", { enum: ["secret", "certificate"] }).notNull(),
+  // AES-GCM ciphertext + iv of the client secret (null when auth_method is 'certificate').
+  secretCt: text("secret_ct"),
+  secretIv: text("secret_iv"),
+  // AES-GCM ciphertext + iv of the PKCS8 private key (null when auth_method is 'secret').
+  certKeyCt: text("cert_key_ct"),
+  certKeyIv: text("cert_key_iv"),
+  certThumbprint: text("cert_thumbprint"),
+  lastVerifiedAt: integer("last_verified_at", { mode: "timestamp_ms" }),
   updatedAt: updatedAt(),
 });
 

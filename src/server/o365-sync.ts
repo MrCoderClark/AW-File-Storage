@@ -1,29 +1,69 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { buildDb } from "./db";
+import { buildDb, type Db } from "./db";
 import { files } from "./db/schema";
 import {
   findUsersByEmail,
-  type GraphEnv,
-  graphConfigured,
+  type GraphCreds,
+  graphConfiguredForOrg,
   patchUserExtensionAttribute1,
 } from "./graph";
 import { orgDb } from "./org-db";
+import { decryptSecret } from "./secret-box";
 import { publicUrlFor, type UploadEnv } from "./uploads";
 
 /**
- * The sync runs for a card only when the platform credentials are present AND
- * that card's ORGANIZATION has opted in (spec 0012 — the O365 toggle is per-org).
- * `graphConfigured` is the cheap global gate; the per-org toggle is read from
- * `orgDb().settings`. A missing org row reads as off.
+ * Load and decrypt an org's Microsoft Graph credentials (spec 0013). Each org
+ * brings its own Entra app; the secret / cert key are decrypted with the
+ * `O365_CRED_KEK` Worker secret. Returns null when the org has no (usable)
+ * credentials, so the sync no-ops for it.
  */
-async function o365EnabledForOrg(
+export async function loadGraphCreds(
   env: O365SyncEnv,
   orgId: string,
-  db = buildDb(env.DB),
-): Promise<boolean> {
-  if (!graphConfigured(env)) return false;
-  return (await orgDb(orgId, db).settings.get()).o365SyncEnabled;
+  db: Db,
+): Promise<GraphCreds | null> {
+  const kek = env.O365_CRED_KEK;
+  if (!kek) return null;
+  const row = await orgDb(orgId, db).graphCreds.get();
+  if (!row) return null;
+  const creds: GraphCreds = {
+    tenantId: row.tenantId,
+    clientId: row.clientId,
+    method: row.authMethod,
+  };
+  try {
+    if (row.authMethod === "secret" && row.secretCt && row.secretIv) {
+      creds.secret = await decryptSecret(kek, { iv: row.secretIv, ct: row.secretCt });
+    } else if (
+      row.authMethod === "certificate" &&
+      row.certKeyCt &&
+      row.certKeyIv
+    ) {
+      creds.certPrivateKey = await decryptSecret(kek, {
+        iv: row.certKeyIv,
+        ct: row.certKeyCt,
+      });
+      creds.certThumbprint = row.certThumbprint;
+    }
+  } catch {
+    return null; // undecryptable (wrong/rotated KEK) — treat as not configured
+  }
+  return graphConfiguredForOrg(creds) ? creds : null;
+}
+
+/**
+ * The org's usable creds IF its O365 sync toggle is on (spec 0012) AND it has
+ * credentials (spec 0013); else null and the sync no-ops. Credentials gate, the
+ * toggle switches.
+ */
+async function o365CredsForOrg(
+  env: O365SyncEnv,
+  orgId: string,
+  db: Db,
+): Promise<GraphCreds | null> {
+  if (!(await orgDb(orgId, db).settings.get()).o365SyncEnabled) return null;
+  return loadGraphCreds(env, orgId, db);
 }
 
 // Office 365 CustomAttribute1 sync (spec 0010). For one card, write its public
@@ -32,7 +72,10 @@ async function o365EnabledForOrg(
 // and best effort (never throws; records the outcome). Called after publish/edit
 // (set) and unpublish/delete (clear), and by the nightly reconcile.
 
-export type O365SyncEnv = UploadEnv & GraphEnv;
+// The sync needs the D1/R2 env (UploadEnv) plus the KEK that decrypts each org's
+// stored credentials (spec 0013). The Graph credentials themselves are per-org, in
+// the DB — no global GRAPH_* here.
+export type O365SyncEnv = UploadEnv & { O365_CRED_KEK?: string };
 
 type SyncStatus = "synced" | "cleared" | "no_match" | "ambiguous" | "error";
 
@@ -85,7 +128,7 @@ export async function syncCardToO365(
   env: O365SyncEnv,
   fileId: string,
 ): Promise<void> {
-  if (!graphConfigured(env)) return;
+  if (!env.O365_CRED_KEK) return; // no way to decrypt any org's creds
 
   const db = buildDb(env.DB);
   const [file] = await db
@@ -104,8 +147,10 @@ export async function syncCardToO365(
     .where(eq(files.id, fileId))
     .limit(1);
   if (!file) return;
-  // Per-org opt-in (spec 0012): the card's own org must have the toggle on.
-  if (!(await o365EnabledForOrg(env, file.orgId, db))) return;
+  // Per-org: the card's own org must have the toggle on (spec 0012) AND its own
+  // credentials configured (spec 0013). `creds` are used for every Graph call.
+  const creds = await o365CredsForOrg(env, file.orgId, db);
+  if (!creds) return;
 
   const isLive =
     file.kind === "vcard" &&
@@ -120,7 +165,7 @@ export async function syncCardToO365(
     // Not a live published card: clear anything we set, mark cleared.
     if (!targetUrl) {
       if (prevUserId && prevUrl) {
-        await patchUserExtensionAttribute1(env, prevUserId, null);
+        await patchUserExtensionAttribute1(creds, prevUserId, null);
       }
       await writeState(env, fileId, file.orgId, "o365.cleared", {
         o365UserId: null,
@@ -134,7 +179,7 @@ export async function syncCardToO365(
     const email = file.contactEmail?.trim();
     if (!email) {
       if (prevUserId && prevUrl) {
-        await patchUserExtensionAttribute1(env, prevUserId, null);
+        await patchUserExtensionAttribute1(creds, prevUserId, null);
       }
       await writeState(env, fileId, file.orgId, "o365.cleared", {
         o365UserId: null,
@@ -144,11 +189,11 @@ export async function syncCardToO365(
       return;
     }
 
-    const matches = await findUsersByEmail(env, email);
+    const matches = await findUsersByEmail(creds, email);
     if (matches.length !== 1) {
       // Zero or many mailboxes for this email: do not write. Clear a stale value.
       if (prevUserId && prevUrl) {
-        await patchUserExtensionAttribute1(env, prevUserId, null);
+        await patchUserExtensionAttribute1(creds, prevUserId, null);
       }
       await writeState(env, fileId, file.orgId, "o365.cleared", {
         o365UserId: null,
@@ -161,11 +206,11 @@ export async function syncCardToO365(
     const user = matches[0];
     // The match moved to a different mailbox: clear the old one first.
     if (prevUserId && prevUserId !== user.id && prevUrl) {
-      await patchUserExtensionAttribute1(env, prevUserId, null);
+      await patchUserExtensionAttribute1(creds, prevUserId, null);
     }
     // Idempotent: only write when the live attribute differs from the target.
     if (user.currentAttr !== targetUrl) {
-      await patchUserExtensionAttribute1(env, user.id, targetUrl);
+      await patchUserExtensionAttribute1(creds, user.id, targetUrl);
     }
     await writeState(env, fileId, file.orgId, "o365.synced", {
       o365UserId: user.id,
@@ -190,8 +235,8 @@ export async function syncCardToO365(
  * action. A no-op when sync is disabled. Call it after the action commits.
  */
 export function triggerO365Sync(env: O365SyncEnv, fileId: string): void {
-  // Cheap sync guard; syncCardToO365 does the full check (credentials + toggle).
-  if (!graphConfigured(env)) return;
+  // Cheap guard; syncCardToO365 does the full per-org check (creds + toggle).
+  if (!env.O365_CRED_KEK) return;
   const p = syncCardToO365(env, fileId).catch(() => {});
   try {
     getCloudflareContext().ctx.waitUntil(p);
@@ -208,9 +253,9 @@ export function triggerO365Sync(env: O365SyncEnv, fileId: string): void {
 export async function reconcileO365(
   env: O365SyncEnv,
 ): Promise<{ enabled: boolean; processed: number }> {
-  // `enabled` now means the platform credentials are present; whether a given
-  // card syncs is decided per-org below (spec 0012). No creds → nothing to do.
-  if (!graphConfigured(env)) return { enabled: false, processed: 0 };
+  // `enabled` now means the KEK is present (so some org COULD sync); whether a
+  // given card syncs is decided per-org below by its creds + toggle (spec 0013).
+  if (!env.O365_CRED_KEK) return { enabled: false, processed: 0 };
   const db = buildDb(env.DB);
   const rows = await db
     .select({ id: files.id, orgId: files.orgId })
@@ -222,17 +267,17 @@ export async function reconcileO365(
         isNull(files.deletedAt),
       ),
     );
-  // Cache each org's toggle so a run touches org_settings once per org, not once
-  // per card. Only cards in an opted-in org are synced.
-  const enabledByOrg = new Map<string, boolean>();
+  // Resolve each org's usable creds once per run (toggle on + credentials, each
+  // org's own). Cards in an org with no creds / toggle off are skipped.
+  const credsByOrg = new Map<string, GraphCreds | null>();
   let processed = 0;
   for (const row of rows) {
-    let enabled = enabledByOrg.get(row.orgId);
-    if (enabled === undefined) {
-      enabled = (await orgDb(row.orgId, db).settings.get()).o365SyncEnabled;
-      enabledByOrg.set(row.orgId, enabled);
+    let creds = credsByOrg.get(row.orgId);
+    if (creds === undefined) {
+      creds = await o365CredsForOrg(env, row.orgId, db);
+      credsByOrg.set(row.orgId, creds);
     }
-    if (!enabled) continue;
+    if (!creds) continue;
     await syncCardToO365(env, row.id);
     processed++;
   }
