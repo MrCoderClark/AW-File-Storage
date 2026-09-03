@@ -12,6 +12,11 @@
 .dev.vars
 wrangler.local.jsonc
 
+# certificates / private keys — never commit (spec 0011 AC-5; keys live only as Worker secrets)
+*.pem
+*.pk8.pem
+*.key
+
 # env
 .env
 .env.*

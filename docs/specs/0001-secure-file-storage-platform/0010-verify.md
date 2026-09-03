@@ -5,7 +5,11 @@ _Steps derived from spec 0010 acceptance criteria. `/check verify` runs these; `
 - [ ] Apply migrations 0012 (five `o365_*` columns on `file`) and 0013 (`o365_sync_enabled` on `app_settings`): `wrangler d1 migrations apply aw-file-storage --local` and `--remote`
 - [ ] Secrets set (prod: `wrangler secret put`; local: `.dev.vars`): `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` (credentials gate the feature)
 - [ ] Enable: **Settings → Office 365 → toggle on** (owner/admin). No secret/redeploy needed; the toggle is stored in the DB. It stays disabled while the credentials are missing.
-- [ ] Redeploy the **cron** worker (`cron/`) so the nightly reconcile fires (it calls `/api/cron/o365-sync`).
+- [ ] Redeploy the **cron** worker so the nightly reconcile fires (it calls `/api/cron/o365-sync`). **This is a SEPARATE deploy — `npm run deploy` does NOT touch it:**
+  ```bash
+  npx wrangler deploy --config cron/wrangler.jsonc
+  ```
+  Verify in the Cloudflare dashboard that `aw-file-storage-cron`'s active version is dated *after* this change — otherwise the nightly run silently does cleanup-only. (This exact step was missed once: the reconcile ran cleanup-only from 2026-09-02 until the redeploy on 2026-09-03.)
 
 ## Commands
 - [ ] `npx vitest run test/o365-sync.test.ts` → 6 pass (idempotent, clear, no_match/ambiguous, disabled no-op, error) → AC-2, AC-3, AC-5, AC-7
