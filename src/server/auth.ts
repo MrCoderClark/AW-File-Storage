@@ -67,6 +67,7 @@ export function buildAuth(env: AuthEnv) {
             "We received a request to reset your AW File Storage password. Use the button below to choose a new one.",
             url,
             "Reset password",
+            user.name,
           ),
         });
       },
@@ -80,6 +81,7 @@ export function buildAuth(env: AuthEnv) {
             "Please confirm your email address to finish setting up your AW File Storage account.",
             url,
             "Verify email",
+            user.name,
           ),
         });
       },
