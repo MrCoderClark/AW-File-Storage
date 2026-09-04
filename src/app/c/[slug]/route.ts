@@ -1,13 +1,14 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getAppSettings } from "@/server/app-settings";
 import { buildCardLandingHtml } from "@/lib/card-landing-html";
+import { buildCardPdf } from "@/lib/card-pdf";
 import { AW_SIGNATURE_BRAND, logoForState } from "@/lib/signature-brand";
 import {
   isCountableUserAgent,
   recordCardHit,
   type CardMetric,
 } from "@/server/card-stats";
-import { r2GetText } from "@/server/r2";
+import { r2GetBytes, r2GetText } from "@/server/r2";
 import { getSession } from "@/server/session";
 import { resolveCardBySlug } from "@/server/signature";
 import { getStateLogoUrl, resolveSocials } from "@/server/social-links";
@@ -15,9 +16,15 @@ import { publicKeyFor, type UploadEnv } from "@/server/uploads";
 import { parseVcard } from "@/server/vcard";
 
 // Serving for a published contact card, split by request host (spec 0009).
-// ONE GET handler for two shapes under /c/:
+// ONE GET handler for three shapes under /c/:
 //   /c/<slug>       → the styled HTML landing page (a scan when ?src=qr).
 //   /c/<slug>.vcf   → the vCard bytes, byte-and-type identical to what R2 served.
+//   /c/<slug>.pdf   → the same card as a one-page PDF to print or keep.
+//
+// The .pdf is generated on the fly from the SAME published `.vcf` in R2, so it
+// can never drift from the card or the landing page. It counts under its own
+// `pdf` metric rather than being folded into `download` (the `.vcf`), so neither
+// number changes meaning.
 //
 // The PUBLIC host (contacts.awvcard.com = PUBLIC_FILE_DOMAIN) serves both to
 // anyone — QR codes, email signatures, and the Office 365 .vcf link depend on it.
@@ -32,6 +39,55 @@ export const dynamic = "force-dynamic";
 
 const NOINDEX = "noindex, nofollow";
 const NO_CACHE = "private, no-store";
+
+/**
+ * Logo bytes for the PDF header, resolved the same way the landing page resolves
+ * its `<img src>`: the org's uploaded per-state logo first, else the built-in
+ * state logo.
+ *
+ * Neither branch may fetch a page URL. An uploaded logo's URL points at THIS
+ * Worker's own /logos/<org>/<file> route on the same hostname, and a Worker
+ * calling its own hostname does not work in production (it silently failed, so
+ * every live PDF fell back to the text header). Instead:
+ *   uploaded  → read the object straight out of the public R2 bucket, which is
+ *               exactly what the /logos route does, minus the round trip.
+ *   built-in  → read it from the ASSETS binding, not over HTTP.
+ *
+ * Returns null on any failure: a missing logo must never fail the download.
+ */
+async function loadLogoBytes(
+  env: UploadEnv,
+  url: URL,
+  uploadedLogo: string | null,
+  logoPath: string,
+): Promise<Uint8Array | null> {
+  try {
+    if (uploadedLogo) {
+      // The stored URL is `<host>/logos/<org>/<state>.<ext>?v=<cachebust>`, and
+      // the R2 key is that path without the leading slash or the query.
+      const key = new URL(uploadedLogo, url.origin).pathname.replace(/^\/+/, "");
+      if (!key.startsWith("logos/")) return null;
+      const obj = await r2GetBytes(
+        {
+          accountId: env.R2_ACCOUNT_ID,
+          accessKeyId: env.R2_ACCESS_KEY_ID,
+          secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+        },
+        env.R2_PUBLIC_BUCKET,
+        key,
+      );
+      return obj ? new Uint8Array(obj.body) : null;
+    }
+
+    const assets = (env as unknown as { ASSETS?: Fetcher }).ASSETS;
+    const target = new URL(logoPath, url.origin).toString();
+    const res = assets ? await assets.fetch(target) : await fetch(target);
+    if (!res.ok) return null;
+    return new Uint8Array(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(
   req: Request,
@@ -59,8 +115,10 @@ export async function GET(
     }
   }
 
-  const isDownload = rawSlug.toLowerCase().endsWith(".vcf");
-  const slug = isDownload ? rawSlug.slice(0, -4) : rawSlug;
+  const lowerSlug = rawSlug.toLowerCase();
+  const isDownload = lowerSlug.endsWith(".vcf");
+  const isPdf = lowerSlug.endsWith(".pdf");
+  const slug = isDownload || isPdf ? rawSlug.slice(0, -4) : rawSlug;
 
   const ref = await resolveCardBySlug(env, slug);
   if (!ref) {
@@ -108,18 +166,50 @@ export async function GET(
     });
   }
 
+  const baseUrl = url.origin;
+
+  // The PDF is its own metric, and this branch sits ABOVE the view/scan counting
+  // on purpose: a .pdf request is a save, not a page view, so it must not record
+  // both. Like every other metric it only counts on the public host, so a
+  // signed-in member saving a PDF from www never moves the number.
+  if (isPdf) {
+    count("pdf");
+    const card = parseVcard(raw);
+    const state = card.address.state;
+    const uploadedLogo = await getStateLogoUrl(env, ref.orgId, state);
+    const pdf = await buildCardPdf({
+      card,
+      brand: AW_SIGNATURE_BRAND,
+      canonicalUrl: `${baseUrl}/c/${slug}`,
+      logoImage: await loadLogoBytes(
+        env,
+        url,
+        uploadedLogo,
+        logoForState(AW_SIGNATURE_BRAND, state),
+      ),
+    });
+    return new Response(pdf as BodyInit, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${slug}.pdf"`,
+        "Cache-Control": NO_CACHE,
+        "X-Robots-Tag": NOINDEX,
+      },
+    });
+  }
+
   // Landing page: a QR-sourced load is a scan, otherwise a plain view.
   const isScan = url.searchParams.get("src") === "qr";
   count(isScan ? "scan" : "view");
 
   const card = parseVcard(raw);
   const state = card.address.state;
-  const socials = await resolveSocials(env, ref.orgId, state);
   // Prefer the org's admin-assigned per-state logo (same as the signature); fall
   // back to the built-in state logo when none is uploaded.
   const uploadedLogo = await getStateLogoUrl(env, ref.orgId, state);
-  const baseUrl = url.origin;
   const logoUrl = uploadedLogo ?? `${baseUrl}${logoForState(AW_SIGNATURE_BRAND, state)}`;
+
+  const socials = await resolveSocials(env, ref.orgId, state);
   const html = buildCardLandingHtml({
     card,
     // Same-host .vcf link. On the app host the whole page is a gated staff
@@ -129,6 +219,7 @@ export async function GET(
     logoUrl,
     baseUrl,
     canonicalUrl: `${baseUrl}/c/${slug}`,
+    pdfUrl: `${baseUrl}/c/${slug}.pdf`,
     socials,
     brand: AW_SIGNATURE_BRAND,
   });

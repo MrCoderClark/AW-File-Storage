@@ -238,7 +238,9 @@ export const cardStatDaily = sqliteTable(
       .references(() => files.id, { onDelete: "cascade" }),
     // Activity day as "YYYY-MM-DD" in UTC.
     date: text("date").notNull(),
-    metric: text("metric", { enum: ["view", "scan", "download"] }).notNull(),
+    // "download" is the .vcf ("Add to contacts"); "pdf" is the .pdf save. Kept
+    // apart so neither number quietly changes meaning.
+    metric: text("metric", { enum: ["view", "scan", "download", "pdf"] }).notNull(),
     count: integer("count").notNull().default(0),
   },
   (t) => [
@@ -250,7 +252,7 @@ export const cardStatDaily = sqliteTable(
     index("card_stat_daily_org_file_idx").on(t.orgId, t.fileId),
     check(
       "card_stat_daily_metric_ck",
-      sql`${t.metric} in ('view','scan','download')`,
+      sql`${t.metric} in ('view','scan','download','pdf')`,
     ),
   ],
 );

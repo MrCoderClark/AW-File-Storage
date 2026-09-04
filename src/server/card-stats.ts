@@ -25,12 +25,21 @@ export interface CardStatsEnv {
 export interface CardTotals {
   views: number;
   scans: number;
+  /** `.vcf` downloads — the "Add to contacts" button. */
   downloads: number;
+  /** `.pdf` saves — the "Save as PDF" button. */
+  pdfs: number;
   /** Most recent activity day as "YYYY-MM-DD", or null if never touched. */
   lastActivity: string | null;
 }
 
-const ZERO: CardTotals = { views: 0, scans: 0, downloads: 0, lastActivity: null };
+const ZERO: CardTotals = {
+  views: 0,
+  scans: 0,
+  downloads: 0,
+  pdfs: 0,
+  lastActivity: null,
+};
 
 /**
  * User agents we never count (AC-4): search crawlers and the link-preview
@@ -127,6 +136,7 @@ export async function cardTotalsForFiles(
     if (row.metric === "view") t.views = Number(row.total);
     else if (row.metric === "scan") t.scans = Number(row.total);
     else if (row.metric === "download") t.downloads = Number(row.total);
+    else if (row.metric === "pdf") t.pdfs = Number(row.total);
     if (!t.lastActivity || row.lastDate > t.lastActivity) t.lastActivity = row.lastDate;
     out.set(row.fileId, t);
   }
@@ -144,7 +154,13 @@ export function cardTotalsOrZero(
 export interface CardStatDetail {
   totals: CardTotals;
   /** Daily points (ascending by date) within the requested window. */
-  series: { date: string; views: number; scans: number; downloads: number }[];
+  series: {
+    date: string;
+    views: number;
+    scans: number;
+    downloads: number;
+    pdfs: number;
+  }[];
 }
 
 /**
@@ -165,7 +181,7 @@ export async function cardStatDetail(
 
   const byDate = new Map<
     string,
-    { date: string; views: number; scans: number; downloads: number }
+    { date: string; views: number; scans: number; downloads: number; pdfs: number }
   >();
   for (const row of rows) {
     const point = byDate.get(row.date) ?? {
@@ -173,10 +189,12 @@ export async function cardStatDetail(
       views: 0,
       scans: 0,
       downloads: 0,
+      pdfs: 0,
     };
     if (row.metric === "view") point.views = Number(row.total);
     else if (row.metric === "scan") point.scans = Number(row.total);
     else if (row.metric === "download") point.downloads = Number(row.total);
+    else if (row.metric === "pdf") point.pdfs = Number(row.total);
     byDate.set(row.date, point);
   }
   const series = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
@@ -193,9 +211,16 @@ export interface OrgEngagement {
     views: number;
     scans: number;
     downloads: number;
+    pdfs: number;
   }[];
   /** Org-wide daily points (ascending) within the window. */
-  series: { date: string; views: number; scans: number; downloads: number }[];
+  series: {
+    date: string;
+    views: number;
+    scans: number;
+    downloads: number;
+    pdfs: number;
+  }[];
 }
 
 /**
@@ -223,22 +248,25 @@ export async function orgEngagement(
   const totals: CardTotals = { ...ZERO };
   const byDate = new Map<
     string,
-    { date: string; views: number; scans: number; downloads: number }
+    { date: string; views: number; scans: number; downloads: number; pdfs: number }
   >();
   for (const row of rows) {
     const n = Number(row.total);
     if (row.metric === "view") totals.views += n;
     else if (row.metric === "scan") totals.scans += n;
     else if (row.metric === "download") totals.downloads += n;
+    else if (row.metric === "pdf") totals.pdfs += n;
     const point = byDate.get(row.date) ?? {
       date: row.date,
       views: 0,
       scans: 0,
       downloads: 0,
+      pdfs: 0,
     };
     if (row.metric === "view") point.views += n;
     else if (row.metric === "scan") point.scans += n;
     else if (row.metric === "download") point.downloads += n;
+    else if (row.metric === "pdf") point.pdfs += n;
     byDate.set(row.date, point);
     if (!totals.lastActivity || row.date > totals.lastActivity) {
       totals.lastActivity = row.date;
@@ -261,6 +289,7 @@ export async function orgEngagement(
     views: Number(r.views),
     scans: Number(r.scans),
     downloads: Number(r.downloads),
+    pdfs: Number(r.pdfs),
   }));
 
   return { totals, topCards, series };

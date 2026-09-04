@@ -34,12 +34,13 @@ export interface SerializedFile {
   createdAt: string;
   updatedAt: string;
   canManage: boolean;
-  // Public-landing engagement (spec 0008): view/scan/download totals for a
+  // Public-landing engagement (spec 0008): view/scan/download/pdf totals for a
   // published card, or null for private/non-vCard rows with no public page.
   stats: {
     views: number;
     scans: number;
     downloads: number;
+    pdfs: number;
     lastActivity: string | null;
   } | null;
   // Office 365 sync status (spec 0010), or null when never synced / feature off.
@@ -816,9 +817,10 @@ function MenuLink({
   );
 }
 
-// Compact per-card engagement (spec 0008): views, scans, downloads, each with an
-// icon + count and a tooltip. A dash for private/non-vCard rows, which have no
-// public landing page; all-zeros for a published card nobody has opened yet.
+// Compact per-card engagement (spec 0008): views, QR scans, `.vcf` downloads and
+// `.pdf` saves, each with an icon + count and a tooltip. A dash for
+// private/non-vCard rows, which have no public landing page; all-zeros for a
+// published card nobody has opened yet.
 function EngagementCell({ stats }: { stats: SerializedFile["stats"] }) {
   if (!stats) return <span className="text-muted-400">—</span>;
   return (
@@ -831,9 +833,13 @@ function EngagementCell({ stats }: { stats: SerializedFile["stats"] }) {
         <ScanIcon className="h-3.5 w-3.5" />
         {stats.scans}
       </span>
-      <span className="inline-flex items-center gap-1" title="Downloads">
+      <span className="inline-flex items-center gap-1" title="Contact downloads (.vcf)">
         <DownloadIcon className="h-3.5 w-3.5" />
         {stats.downloads}
+      </span>
+      <span className="inline-flex items-center gap-1" title="PDF saves">
+        <PdfIcon className="h-3.5 w-3.5" />
+        {stats.pdfs}
       </span>
     </span>
   );
@@ -862,6 +868,15 @@ function DownloadIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden className={className}>
       <path d="M12 4v10m0 0 3.5-3.5M12 14l-3.5-3.5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M5 18.5h14" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PdfIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden className={className}>
+      <path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5Z" strokeLinejoin="round" />
+      <path d="M13.5 3.5v5h5" strokeLinejoin="round" />
     </svg>
   );
 }
