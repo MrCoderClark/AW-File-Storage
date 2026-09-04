@@ -84,12 +84,12 @@ const BRAND = {
 const FONT =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
-// The site logo (identical to src/app/icon.svg / the app-header <Logo>): a blue
-// card mark on its own gradient background, so it reads on the navy header and on
-// white alike. Inline so no external hosting is needed; SVG-stripping clients
-// (Gmail, Outlook) fall back to the wordmark. For universal rendering, swap this
-// for an <img> pointing at a hosted PNG export of the same mark.
-const LOGO_SVG = `<svg width="26" height="26" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AW File Storage" style="display:inline-block;vertical-align:middle;"><defs><linearGradient id="awg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a92e0"/><stop offset="1" stop-color="#1f5d99"/></linearGradient></defs><rect width="32" height="32" rx="7.5" fill="url(#awg)"/><rect x="6.5" y="8" width="14" height="16.5" rx="2.5" fill="#ffffff"/><circle cx="13.5" cy="14" r="2.6" fill="#1f5d99"/><path d="M9.3 21.4a4.2 4.2 0 0 1 8.4 0z" fill="#1f5d99"/><g fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round"><path d="M21.8 9.6a4.6 4.6 0 0 1 3.2 3.2"/><path d="M22.2 6.4a8.4 8.4 0 0 1 6 6"/></g></svg>`;
+// The email logo is a SEPARATE, email-only asset: a hosted PNG, because email
+// clients (Outlook, Gmail) don't render SVG. It is generated from the site logo
+// (public/aw-file-storage-logo.png) for brand consistency, but the website keeps
+// using its own SVG (src/app/icon.svg) — that is untouched. Update this URL if the
+// app's domain changes.
+const LOGO_URL = "https://www.awvcard.com/aw-file-storage-logo.png";
 
 /** Escape text destined for HTML. Every interpolated value goes through this. */
 export function escapeHtml(value: string): string {
@@ -170,9 +170,9 @@ export function emailShell(opts: {
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid ${BRAND.border};border-radius:8px;overflow:hidden;">
         <tr>
           <td align="center" style="background-color:${BRAND.navy};padding:16px 24px;font-family:${FONT};font-size:17px;line-height:26px;color:#ffffff;">
-            <!-- Inline cloud mark: renders in Apple Mail/iOS; clients that strip
-                 SVG (Gmail, Outlook) simply show the wordmark below, no broken image. -->
-            <span style="display:inline-block;vertical-align:middle;margin-right:9px;">${LOGO_SVG}</span>
+            <!-- Hosted PNG so it renders everywhere (Outlook/Gmail included). If a
+                 client blocks images, the empty alt keeps the wordmark clean. -->
+            <img src="${LOGO_URL}" width="26" height="26" alt="" style="vertical-align:middle;margin-right:9px;border:0;display:inline-block;">
             <span style="font-weight:700;vertical-align:middle;">AW File Storage</span>
             <span style="color:#9fb6d1;vertical-align:middle;"> | Secure. Scalable. Simple.</span>
           </td>
