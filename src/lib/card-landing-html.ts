@@ -12,6 +12,8 @@ export interface CardLandingInput {
   card: ParsedVcard;
   /** The `.vcf` download href (the counted download route). */
   vcfUrl: string;
+  /** The `.pdf` href: the same card as a one-page printable/saveable PDF. */
+  pdfUrl: string;
   /** Absolute URL of the hosted QR image. */
   qrUrl: string;
   /** Absolute logo URL for this card's state. */
@@ -88,7 +90,7 @@ function socialRow(input: CardLandingInput): string {
  * OG/Twitter tags so a link pasted into chat unfurls with the person's name.
  */
 export function buildCardLandingHtml(input: CardLandingInput): string {
-  const { card, vcfUrl, qrUrl, logoUrl, canonicalUrl, brand } = input;
+  const { card, vcfUrl, pdfUrl, qrUrl, logoUrl, canonicalUrl, brand } = input;
   const c = brand;
 
   const subtitle = [card.title, card.organization].filter(Boolean).join(" · ");
@@ -169,7 +171,7 @@ export function buildCardLandingHtml(input: CardLandingInput): string {
   .subtitle { font-size: 14px; color: ${c.mutedColor}; margin: 4px 0 0; }
   .add {
     display: block;
-    margin: 18px 0 22px;
+    margin: 18px 0 10px;
     background: ${c.buttonColor};
     color: #ffffff;
     text-align: center;
@@ -177,6 +179,19 @@ export function buildCardLandingHtml(input: CardLandingInput): string {
     font-weight: bold;
     font-size: 15px;
     padding: 13px 16px;
+    border-radius: 8px;
+  }
+  .save {
+    display: block;
+    margin: 0 0 22px;
+    background: #ffffff;
+    color: ${c.headingColor};
+    border: 1px solid #d7dfeb;
+    text-align: center;
+    text-decoration: none;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 11px 16px;
     border-radius: 8px;
   }
   .row {
@@ -215,6 +230,14 @@ export function buildCardLandingHtml(input: CardLandingInput): string {
     .card { background: #1b2230; box-shadow: none; }
     .row { border-top-color: #2a3444; }
     .row .value.plain, .name { color: #e8edf5; }
+    .save { background: #232c3c; color: #e8edf5; border-color: #334054; }
+  }
+  /* Printing the page is the poor cousin of the PDF, but if someone does it,
+     don't waste ink on the grey backdrop or print the two buttons. */
+  @media print {
+    body { background: #ffffff; padding: 0; }
+    .card { box-shadow: none; max-width: none; }
+    .add, .save { display: none; }
   }
 </style>
 </head>
@@ -226,6 +249,7 @@ export function buildCardLandingHtml(input: CardLandingInput): string {
       <h1 class="name">${esc(card.fullName)}</h1>
       ${subtitle ? `<p class="subtitle">${esc(subtitle)}</p>` : ""}
       <a class="add" href="${esc(vcfUrl)}">Add to contacts</a>
+      <a class="save" href="${esc(pdfUrl)}">Save as PDF</a>
       ${contacts}
       ${addressBlock}
       ${socialRow(input)}

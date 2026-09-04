@@ -352,6 +352,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
           views: sql<number>`sum(case when ${cardStatDaily.metric} = 'view' then ${cardStatDaily.count} else 0 end)`,
           scans: sql<number>`sum(case when ${cardStatDaily.metric} = 'scan' then ${cardStatDaily.count} else 0 end)`,
           downloads: sql<number>`sum(case when ${cardStatDaily.metric} = 'download' then ${cardStatDaily.count} else 0 end)`,
+          pdfs: sql<number>`sum(case when ${cardStatDaily.metric} = 'pdf' then ${cardStatDaily.count} else 0 end)`,
         })
         .from(cardStatDaily)
         .innerJoin(files, eq(files.id, cardStatDaily.fileId))
@@ -402,8 +403,12 @@ export function orgDb(orgId: string, db: Db = getDb()) {
   };
 }
 
-/** The metric values counted per card (spec 0008). */
-export type CardMetric = "view" | "scan" | "download";
+/**
+ * The metric values counted per card (spec 0008). "download" is the `.vcf`
+ * ("Add to contacts"); "pdf" is the `.pdf` save, counted separately so neither
+ * number changes meaning. Mirrored by the CHECK on `card_stat_daily.metric`.
+ */
+export type CardMetric = "view" | "scan" | "download" | "pdf";
 
 /**
  * Build an org-scoped client straight from a D1 binding, for the modules that

@@ -26,7 +26,7 @@ export default async function DashboardPage() {
   // the gaps for a gapless chart), matching the uploads chart's shape.
   const eng = data.engagement;
   const engByDate = new Map(
-    eng.series.map((p) => [p.date, p.views + p.scans + p.downloads]),
+    eng.series.map((p) => [p.date, p.views + p.scans + p.downloads + p.pdfs]),
   );
   const now = new Date();
   const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
@@ -112,11 +112,12 @@ export default async function DashboardPage() {
             <Metric label="Views" value={eng.totals.views} />
             <Metric label="Scans" value={eng.totals.scans} />
             <Metric label="Downloads" value={eng.totals.downloads} />
+            <Metric label="PDF saves" value={eng.totals.pdfs} />
           </div>
           <div className="mt-4">
             <AreaChart
               values={engTrend}
-              ariaLabel="Card views, scans, and downloads per day over the last 30 days"
+              ariaLabel="Card views, scans, downloads, and PDF saves per day over the last 30 days"
             />
           </div>
         </Panel>
@@ -130,13 +131,13 @@ export default async function DashboardPage() {
                 <li
                   key={c.fileId}
                   className="flex items-center gap-3 text-sm"
-                  title={`${c.views} views · ${c.scans} scans · ${c.downloads} downloads`}
+                  title={`${c.views} views · ${c.scans} scans · ${c.downloads} downloads · ${c.pdfs} PDF saves`}
                 >
                   <span className="min-w-0 flex-1 truncate text-slate-700">
                     {c.name}
                   </span>
                   <span className="shrink-0 tabular-nums font-medium text-brand-900">
-                    {c.views + c.scans + c.downloads}
+                    {c.views + c.scans + c.downloads + c.pdfs}
                   </span>
                 </li>
               ))}

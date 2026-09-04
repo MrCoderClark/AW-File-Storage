@@ -101,20 +101,38 @@ describe("recordCardHit", () => {
     expect(totals.views).toBe(10);
   });
 
-  it("keeps the three metrics separate", async () => {
+  it("keeps the four metrics separate", async () => {
     await insertCard({ id: "f1" });
     await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "view" });
     await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "scan" });
     await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "scan" });
     await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "download" });
+    await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "pdf" });
+    await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "pdf" });
+    await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "pdf" });
     const t = cardTotalsOrZero(await cardTotalsForFiles(ENV, "org-a", ["f1"]), "f1");
-    expect(t).toMatchObject({ views: 1, scans: 2, downloads: 1 });
+    expect(t).toMatchObject({ views: 1, scans: 2, downloads: 1, pdfs: 3 });
+  });
+
+  it("counts a PDF save without touching the .vcf download total", async () => {
+    await insertCard({ id: "f1" });
+    await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "pdf" });
+    const t = cardTotalsOrZero(await cardTotalsForFiles(ENV, "org-a", ["f1"]), "f1");
+    expect(t.pdfs).toBe(1);
+    expect(t.downloads).toBe(0);
+    expect(t.views).toBe(0);
   });
 
   it("returns all-zero totals for a card with no activity", async () => {
     await insertCard({ id: "f1" });
     const t = cardTotalsOrZero(await cardTotalsForFiles(ENV, "org-a", ["f1"]), "f1");
-    expect(t).toEqual({ views: 0, scans: 0, downloads: 0, lastActivity: null });
+    expect(t).toEqual({
+      views: 0,
+      scans: 0,
+      downloads: 0,
+      pdfs: 0,
+      lastActivity: null,
+    });
   });
 });
 
@@ -176,9 +194,27 @@ describe("cardStatDetail", () => {
     await insertCard({ id: "f1" });
     await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "download" });
     await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "download" });
+    await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "pdf" });
     const detail = await cardStatDetail(ENV, "org-a", "f1", 30);
     expect(detail.totals.downloads).toBe(2);
+    expect(detail.totals.pdfs).toBe(1);
     expect(detail.series.length).toBe(1);
     expect(detail.series[0].downloads).toBe(2);
+    expect(detail.series[0].pdfs).toBe(1);
+  });
+});
+
+describe("orgEngagement pdf metric", () => {
+  it("rolls PDF saves into their own total, series point, and top-card column", async () => {
+    await insertCard({ id: "f1" });
+    await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "pdf" });
+    await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "pdf" });
+    await recordCardHit(ENV, { fileId: "f1", orgId: "org-a", metric: "view" });
+
+    const eng = await orgEngagement(ENV, "org-a");
+    expect(eng.totals.pdfs).toBe(2);
+    expect(eng.totals.downloads).toBe(0);
+    expect(eng.series[0].pdfs).toBe(2);
+    expect(eng.topCards[0]).toMatchObject({ fileId: "f1", pdfs: 2, views: 1 });
   });
 });
