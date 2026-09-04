@@ -4,6 +4,7 @@ import { AcceptForm } from "@/components/accept-form";
 import { Logo } from "@/components/logo";
 import { type AuthEnv } from "@/server/auth";
 import { previewInvite } from "@/server/invitations";
+import { previewProvision } from "@/server/provisioning";
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "AW File Storage";
 
@@ -26,7 +27,21 @@ export default async function AcceptInvitationPage({
 }) {
   const { id } = await params;
   const { env } = getCloudflareContext();
-  const preview = await previewInvite(env as unknown as AuthEnv, id);
+  // The id may be a per-org invitation or a platform-owner provision (spec 0014).
+  const invite = await previewInvite(env as unknown as AuthEnv, id);
+  let status: "valid" | "invalid" | "expired" | "used" = invite.status;
+  let email: string | undefined =
+    invite.status === "valid" ? invite.email : undefined;
+  // A single-org invitation carries a role; a multi-org provision does not.
+  let role: string | undefined =
+    invite.status === "valid" ? invite.role : undefined;
+  if (invite.status === "invalid") {
+    const prov = await previewProvision(env as unknown as AuthEnv, id);
+    status = prov.status;
+    email = prov.status === "valid" ? prov.email : undefined;
+    role = undefined;
+  }
+  const preview = { status, email, role };
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -47,7 +62,7 @@ export default async function AcceptInvitationPage({
               </p>
               <AcceptForm
                 invitationId={id}
-                email={preview.email}
+                email={preview.email ?? ""}
                 role={preview.role}
               />
             </>

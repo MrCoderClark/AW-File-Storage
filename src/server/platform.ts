@@ -44,3 +44,31 @@ export async function isPlatformOwner(): Promise<boolean> {
   const { env } = getCloudflareContext();
   return isPlatformOwnerEmail(env as unknown as PlatformEnv, session.user.email);
 }
+
+export type PlatformOwnerResult =
+  | { ok: true; actorUserId: string }
+  | { ok: false; response: Response };
+
+/**
+ * Route guard for platform-owner-only endpoints (spec 0014). Returns the caller's
+ * user id, or a 401/403 JSON response to return directly.
+ */
+export async function requirePlatformOwner(): Promise<PlatformOwnerResult> {
+  const session = await getSession();
+  if (!session) {
+    return {
+      ok: false,
+      response: Response.json({ ok: false, error: "Not signed in." }, { status: 401 }),
+    };
+  }
+  if (!(await isPlatformOwner())) {
+    return {
+      ok: false,
+      response: Response.json(
+        { ok: false, error: "Platform owner only." },
+        { status: 403 },
+      ),
+    };
+  }
+  return { ok: true, actorUserId: session.user.id };
+}
