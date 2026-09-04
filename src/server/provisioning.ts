@@ -40,6 +40,44 @@ export async function suggestOrgForEmail(
   return resolveOrgForEmail(env, email);
 }
 
+export interface EmailLookup {
+  /** The org suggested by the email's verified domain, or null. */
+  match: DomainMatch | null;
+  /** Org ids the email's account is already a member of (grey these out). */
+  existingOrgIds: string[];
+  /** Whether an account already exists for this email. */
+  accountExists: boolean;
+}
+
+/**
+ * Everything the console needs when an email is entered (spec 0014): the
+ * domain-suggested org, which orgs the person already belongs to (so they can be
+ * disabled), and whether the account already exists (so the right mode is picked).
+ */
+export async function lookupEmail(
+  env: AuthEnv,
+  rawEmail: string,
+): Promise<EmailLookup> {
+  const email = rawEmail.trim().toLowerCase();
+  const match = await resolveOrgForEmail(env, email);
+  const db = buildDb(env.DB);
+  const [u] = await db
+    .select({ id: schema.user.id })
+    .from(schema.user)
+    .where(eq(schema.user.email, email))
+    .limit(1);
+  if (!u) return { match, existingOrgIds: [], accountExists: false };
+  const memberships = await db
+    .select({ orgId: schema.member.organizationId })
+    .from(schema.member)
+    .where(eq(schema.member.userId, u.id));
+  return {
+    match,
+    existingOrgIds: memberships.map((m) => m.orgId),
+    accountExists: true,
+  };
+}
+
 /** Every organization (id + name), for the provisioning org picker. Platform-owner use. */
 export async function listAllOrgs(
   env: AuthEnv,
