@@ -49,6 +49,11 @@ const ALLOWLIST = new Set<string>([
   "/src/server/signature.ts",
   "/src/server/rail.ts",
   "/src/server/invitations.ts",
+  // Platform-owner provisioning (spec 0014): cross-org by design — the domain map
+  // resolves any email to its org, and provisioning writes memberships across orgs.
+  // Gated by isPlatformOwner at the route; not org-scopable.
+  "/src/server/domains.ts",
+  "/src/server/provisioning.ts",
 ]);
 
 function importsRawDb(path: string, src: string): boolean {

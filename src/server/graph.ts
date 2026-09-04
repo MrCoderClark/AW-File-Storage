@@ -282,6 +282,23 @@ export async function graphTestConnection(c: GraphCreds): Promise<void> {
   if (!res.ok) throw new Error(`Graph test failed: ${res.status}`);
 }
 
+/**
+ * The tenant's VERIFIED domains (spec 0014), lower-cased, for domain-based
+ * provisioning. Graph `GET /domains` returns each domain's id (the domain name)
+ * and `isVerified`; only verified domains are kept. Throws on a Graph error.
+ */
+export async function getVerifiedDomains(c: GraphCreds): Promise<string[]> {
+  const res = await graphFetch(c, "/domains?$select=id,isVerified");
+  if (!res.ok) throw new Error(`Graph domains query failed: ${res.status}`);
+  const data = (await res.json()) as {
+    value?: Array<{ id: string; isVerified?: boolean }>;
+  };
+  return (data.value ?? [])
+    .filter((d) => d.isVerified)
+    .map((d) => d.id.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 /** Write (or clear, with null) a user's extensionAttribute1 = Exchange CustomAttribute1. */
 export async function patchUserExtensionAttribute1(
   c: GraphCreds,

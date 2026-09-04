@@ -23,9 +23,23 @@ const ADMIN: NavItem[] = [
   { href: "/settings/site", label: "Site" },
 ];
 
-export function SettingsNav({ canManage }: { canManage: boolean }) {
+const PLATFORM: NavItem[] = [
+  { href: "/settings/provisioning", label: "Provisioning" },
+];
+
+export function SettingsNav({
+  canManage,
+  isPlatformOwner = false,
+}: {
+  canManage: boolean;
+  isPlatformOwner?: boolean;
+}) {
   const pathname = usePathname();
-  const items = canManage ? [...BASE, ...ADMIN] : BASE;
+  const items = [
+    ...BASE,
+    ...(canManage ? ADMIN : []),
+    ...(isPlatformOwner ? PLATFORM : []),
+  ];
 
   return (
     <nav

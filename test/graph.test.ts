@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   buildClientAssertion,
+  getVerifiedDomains,
   type GraphCreds,
   graphConfiguredForOrg,
 } from "../src/server/graph";
@@ -62,6 +63,45 @@ describe("per-org credential gate (spec 0013)", () => {
       graphConfiguredForOrg({ tenantId: "", clientId: "c", method: "secret", secret: "s" }),
     ).toBe(false);
     expect(graphConfiguredForOrg(null)).toBe(false);
+  });
+});
+
+describe("getVerifiedDomains (spec 0014)", () => {
+  it("returns only the verified domains, lower-cased", async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes("/oauth2/v2.0/token")) {
+        return new Response(
+          JSON.stringify({ access_token: "tok", expires_in: 3600 }),
+          { status: 200 },
+        );
+      }
+      if (u.includes("/domains")) {
+        return new Response(
+          JSON.stringify({
+            value: [
+              { id: "h2tecs.com", isVerified: true },
+              { id: "unverified.example", isVerified: false },
+              { id: "AW.Example", isVerified: true },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("no", { status: 404 });
+    }) as typeof fetch;
+    try {
+      const domains = await getVerifiedDomains({
+        tenantId: "domains-test-tenant",
+        clientId: "domains-test-client",
+        method: "secret",
+        secret: "s",
+      });
+      expect(domains).toEqual(["h2tecs.com", "aw.example"]);
+    } finally {
+      globalThis.fetch = orig;
+    }
   });
 });
 
