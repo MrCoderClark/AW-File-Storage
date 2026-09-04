@@ -54,13 +54,6 @@ const ALLOWLIST = new Set<string>([
   // Gated by isPlatformOwner at the route; not org-scopable.
   "/src/server/domains.ts",
   "/src/server/provisioning.ts",
-  // SCIM server (spec 0015): a presented bearer token resolves to its org (a
-  // cross-org lookup), then all writes are confined to that org. Token-authenticated
-  // (machine-to-machine), not session-scopable via the wrapper.
-  "/src/server/scim.ts",
-  // Scheduled-email flush (spec 0015): a system job over the pending_email queue,
-  // keyed by user, not org-scoped. Run by cron with the bearer secret.
-  "/src/server/pending-email.ts",
 ]);
 
 function importsRawDb(path: string, src: string): boolean {
