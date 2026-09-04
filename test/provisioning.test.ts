@@ -16,6 +16,7 @@ import {
   acceptProvision,
   assignExistingUser,
   createProvision,
+  lookupEmail,
   suggestOrgForEmail,
 } from "../src/server/provisioning";
 
@@ -74,6 +75,18 @@ describe("domain resolution (spec 0014)", () => {
 
   it("suggestOrgForEmail pre-selects the domain's org", async () => {
     expect((await suggestOrgForEmail(AUTH_ENV, "new@h2tecs.com"))?.orgId).toBe("org-a");
+  });
+
+  it("lookupEmail reports match, existing memberships, and account existence", async () => {
+    const existing = await lookupEmail(AUTH_ENV, "existing@h2tecs.com");
+    expect(existing.match?.orgId).toBe("org-a");
+    expect(existing.existingOrgIds).toEqual(["org-b"]); // already a member of org-b
+    expect(existing.accountExists).toBe(true);
+
+    const fresh = await lookupEmail(AUTH_ENV, "brand-new@h2tecs.com");
+    expect(fresh.match?.orgId).toBe("org-a");
+    expect(fresh.existingOrgIds).toEqual([]);
+    expect(fresh.accountExists).toBe(false);
   });
 });
 

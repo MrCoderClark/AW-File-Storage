@@ -51,13 +51,16 @@ function OrgPicker({
   value,
   onChange,
   suggestedId,
+  disabledIds,
 }: {
   orgs: Org[];
   value: Assignments;
   onChange: (next: Assignments) => void;
   suggestedId?: string | null;
+  disabledIds?: Set<string>;
 }) {
   function toggle(orgId: string) {
+    if (disabledIds?.has(orgId)) return;
     const next = { ...value };
     if (next[orgId]) delete next[orgId];
     else next[orgId] = "member";
@@ -72,22 +75,40 @@ function OrgPicker({
         <p className="px-3 py-2 text-xs text-muted-500">No organizations yet.</p>
       )}
       {orgs.map((o) => {
+        const disabled = disabledIds?.has(o.id) ?? false;
         const checked = Boolean(value[o.id]);
         return (
           <div
             key={o.id}
-            className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 last:border-b-0"
+            className={`flex items-center justify-between gap-3 border-b border-border px-3 py-2 last:border-b-0 ${
+              disabled ? "opacity-50" : ""
+            }`}
           >
-            <label className="flex min-w-0 items-center gap-2 text-sm">
-              <input type="checkbox" checked={checked} onChange={() => toggle(o.id)} />
+            <label
+              className={`flex min-w-0 items-center gap-2 text-sm ${
+                disabled ? "cursor-not-allowed" : ""
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={checked && !disabled}
+                disabled={disabled}
+                onChange={() => toggle(o.id)}
+              />
               <span className="truncate">{o.name}</span>
-              {suggestedId === o.id && (
-                <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                  from domain
+              {disabled ? (
+                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                  already a member
                 </span>
+              ) : (
+                suggestedId === o.id && (
+                  <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                    from domain
+                  </span>
+                )
               )}
             </label>
-            {checked && (
+            {checked && !disabled && (
               <select
                 value={value[o.id]}
                 onChange={(e) => setRole(o.id, e.target.value as Role)}
@@ -108,6 +129,7 @@ function AddUser({ orgs }: { orgs: Org[] }) {
   const [email, setEmail] = useState("");
   const [assignments, setAssignments] = useState<Assignments>({});
   const [suggestedId, setSuggestedId] = useState<string | null>(null);
+  const [existingOrgIds, setExistingOrgIds] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<"invite" | "existing">("invite");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -116,16 +138,36 @@ function AddUser({ orgs }: { orgs: Org[] }) {
   async function onEmailBlur() {
     const e = email.trim().toLowerCase();
     setSuggestedId(null);
+    setExistingOrgIds(new Set());
     if (!e.includes("@")) return;
     try {
       const res = await fetch(`/api/provisioning/suggest?email=${encodeURIComponent(e)}`);
-      const body = (await res.json()) as { match: { orgId: string } | null };
-      if (body.match) {
+      const body = (await res.json()) as {
+        match: { orgId: string } | null;
+        existingOrgIds?: string[];
+        accountExists?: boolean;
+      };
+      const existing = new Set(body.existingOrgIds ?? []);
+      setExistingOrgIds(existing);
+      // If they already have an account, default to adding directly.
+      setMode(body.accountExists ? "existing" : "invite");
+      // Drop any picked org they already belong to.
+      setAssignments((a) => {
+        const next: Assignments = {};
+        for (const [orgId, role] of Object.entries(a)) {
+          if (!existing.has(orgId)) next[orgId] = role;
+        }
+        return next;
+      });
+      // Pre-select the domain-matched org, unless they're already in it.
+      if (body.match && !existing.has(body.match.orgId)) {
         setSuggestedId(body.match.orgId);
-        setAssignments((a) => (a[body.match!.orgId] ? a : { ...a, [body.match!.orgId]: "member" }));
+        setAssignments((a) =>
+          a[body.match!.orgId] ? a : { ...a, [body.match!.orgId]: "member" },
+        );
       }
     } catch {
-      /* suggestion is best-effort */
+      /* lookup is best-effort */
     }
   }
 
@@ -184,6 +226,7 @@ function AddUser({ orgs }: { orgs: Org[] }) {
         value={assignments}
         onChange={setAssignments}
         suggestedId={suggestedId}
+        disabledIds={existingOrgIds}
       />
 
       <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">

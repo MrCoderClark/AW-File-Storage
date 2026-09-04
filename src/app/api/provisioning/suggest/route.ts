@@ -1,11 +1,11 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { type AuthEnv } from "@/server/auth";
 import { requirePlatformOwner } from "@/server/platform";
-import { suggestOrgForEmail } from "@/server/provisioning";
+import { lookupEmail } from "@/server/provisioning";
 
-// Suggest the org for an email by its verified domain (spec 0014), for the
-// console's pre-select. Platform-owner only. Returns null when there's no match
-// (consumer domain / no verified claim).
+// Look up an email for the console (spec 0014): the domain-suggested org, which
+// orgs it already belongs to (to grey out), and whether the account exists.
+// Platform-owner only.
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
@@ -13,5 +13,6 @@ export async function GET(req: Request) {
   if (!guard.ok) return guard.response;
   const email = new URL(req.url).searchParams.get("email") ?? "";
   const env = getCloudflareContext().env as unknown as AuthEnv;
-  return Response.json({ ok: true, match: await suggestOrgForEmail(env, email) });
+  const { match, existingOrgIds, accountExists } = await lookupEmail(env, email);
+  return Response.json({ ok: true, match, existingOrgIds, accountExists });
 }
