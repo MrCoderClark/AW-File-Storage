@@ -559,7 +559,7 @@ export async function sendMemberResetLink(opts: {
             to: u.email,
             subject: "Reset your password",
             html: linkEmail(
-              "An administrator asked you to reset your password:",
+              "An administrator asked you to reset your AW File Storage password. Use the button below to choose a new one.",
               url,
               "Reset password",
             ),

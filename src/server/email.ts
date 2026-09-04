@@ -51,9 +51,17 @@ export async function sendEmail(
   }
 }
 
-/** A tiny escaped link block, shared by the auth emails. */
+/**
+ * A branded action email — the shared shell + call-to-action button — for the
+ * transactional links (password reset, email verification). Same look as the
+ * invitation, without the invite-specific copy. `intro` is a plain sentence.
+ */
 export function linkEmail(intro: string, url: string, cta: string): string {
-  return `<p>${intro}</p><p><a href="${url}">${cta}</a></p><p>If you did not request this, you can ignore this email.</p>`;
+  const content = `          <p style="margin:0 0 18px 0;">${escapeHtml(intro)}</p>
+          ${button(url, cta)}
+          <p style="margin:18px 0 14px 0;font-size:14px;color:${BRAND.muted};">Or paste this link into your browser:<br><a href="${escapeHtml(url)}" style="color:${BRAND.link};word-break:break-all;">${escapeHtml(url)}</a></p>
+          <p style="margin:0;">If you did not request this, you can safely ignore this email.</p>`;
+  return emailShell({ preheader: intro, contentHtml: content });
 }
 
 
@@ -69,6 +77,13 @@ const BRAND = {
 
 const FONT =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+// The site logo (identical to src/app/icon.svg / the app-header <Logo>): a blue
+// card mark on its own gradient background, so it reads on the navy header and on
+// white alike. Inline so no external hosting is needed; SVG-stripping clients
+// (Gmail, Outlook) fall back to the wordmark. For universal rendering, swap this
+// for an <img> pointing at a hosted PNG export of the same mark.
+const LOGO_SVG = `<svg width="26" height="26" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AW File Storage" style="display:inline-block;vertical-align:middle;"><defs><linearGradient id="awg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a92e0"/><stop offset="1" stop-color="#1f5d99"/></linearGradient></defs><rect width="32" height="32" rx="7.5" fill="url(#awg)"/><rect x="6.5" y="8" width="14" height="16.5" rx="2.5" fill="#ffffff"/><circle cx="13.5" cy="14" r="2.6" fill="#1f5d99"/><path d="M9.3 21.4a4.2 4.2 0 0 1 8.4 0z" fill="#1f5d99"/><g fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round"><path d="M21.8 9.6a4.6 4.6 0 0 1 3.2 3.2"/><path d="M22.2 6.4a8.4 8.4 0 0 1 6 6"/></g></svg>`;
 
 /** Escape text destined for HTML. Every interpolated value goes through this. */
 export function escapeHtml(value: string): string {
@@ -88,8 +103,12 @@ export function escapeHtml(value: string): string {
 export function emailShell(opts: {
   preheader: string;
   contentHtml: string;
+  /** The small grey footer line. Defaults to a generic automated-message note. */
+  footerNote?: string;
 }): string {
   const year = new Date().getUTCFullYear();
+  const footerNote =
+    opts.footerNote ?? "This is an automated message from AW File Storage.";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -106,9 +125,12 @@ export function emailShell(opts: {
     <td align="center" style="padding:24px 12px;">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid ${BRAND.border};border-radius:8px;overflow:hidden;">
         <tr>
-          <td align="center" style="background-color:${BRAND.navy};padding:18px 24px;font-family:${FONT};font-size:17px;line-height:24px;color:#ffffff;">
-            <span style="font-weight:700;">AW File Storage</span>
-            <span style="color:#9fb6d1;"> | Secure. Scalable. Simple.</span>
+          <td align="center" style="background-color:${BRAND.navy};padding:16px 24px;font-family:${FONT};font-size:17px;line-height:26px;color:#ffffff;">
+            <!-- Inline cloud mark: renders in Apple Mail/iOS; clients that strip
+                 SVG (Gmail, Outlook) simply show the wordmark below, no broken image. -->
+            <span style="display:inline-block;vertical-align:middle;margin-right:9px;">${LOGO_SVG}</span>
+            <span style="font-weight:700;vertical-align:middle;">AW File Storage</span>
+            <span style="color:#9fb6d1;vertical-align:middle;"> | Secure. Scalable. Simple.</span>
           </td>
         </tr>
         <tr>
@@ -120,7 +142,7 @@ ${opts.contentHtml}
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
         <tr>
           <td align="center" style="padding:16px 12px;font-family:${FONT};font-size:12px;line-height:18px;color:${BRAND.muted};">
-            &copy; ${year} America Works. Sent because someone at your organization invited you to AW File Storage.
+            &copy; ${year} America Works. ${escapeHtml(footerNote)}
           </td>
         </tr>
       </table>
@@ -143,13 +165,22 @@ function button(url: string, label: string): string {
 }
 
 const FEATURES: Array<[string, string]> = [
-  ["Private by default", "Your files sit in storage only your organization can reach."],
   [
-    "Contact cards that just work",
-    "Publish a contact card to a stable web address, ready for a QR code.",
+    "Private by default",
+    "Files land in storage only your organization can reach; nothing is public until you publish it.",
   ],
-  ["Access anywhere", "Upload from any device in the browser, with nothing to install."],
-  ["Fully audited", "Every upload, publish, and deletion is recorded, so nothing is a mystery later."],
+  [
+    "Contact cards, ready to share",
+    "Publish a staff contact card to a stable web link, with a QR code and a printable email signature.",
+  ],
+  [
+    "Works in the browser",
+    "Upload and manage everything from any device, with nothing to install.",
+  ],
+  [
+    "Fully audited",
+    "Every upload, publish, and deletion is recorded, so nothing is a mystery later.",
+  ],
 ];
 
 /**
@@ -169,10 +200,6 @@ export function inviteEmail(opts: {
   const invitedBy = opts.inviterName
     ? `<strong>${escapeHtml(opts.inviterName)}</strong> has invited you`
     : "You have been invited";
-  const org = opts.orgName
-    ? ` to <strong>${escapeHtml(opts.orgName)}</strong> on AW File Storage`
-    : " to <strong>AW File Storage</strong>";
-
   const bullets = FEATURES.map(
     ([label, text]) =>
       `            <li style="margin:0 0 7px 0;"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(text)}</li>`,
@@ -186,7 +213,7 @@ export function inviteEmail(opts: {
   const content = `          <p style="margin:0 0 14px 0;">Hello,</p>
           <p style="margin:0 0 14px 0;">${
             opts.resent ? "Here is your invitation again. " : ""
-          }${invitedBy}${org}, our secure place to store company files and publish contact cards.</p>
+          }${invitedBy} to <strong>AW File Storage</strong>, our secure place to store company files and publish contact cards.</p>
           <p style="margin:0 0 10px 0;">What you get:</p>
           <ul style="margin:0 0 16px 0;padding-left:22px;">
 ${bullets}
@@ -204,5 +231,7 @@ ${bullets}
       opts.inviterName ? `${opts.inviterName} invited you` : "You have been invited"
     } to AW File Storage. Set your password to get started.`,
     contentHtml: content,
+    footerNote:
+      "Sent because someone at your organization invited you to AW File Storage.",
   });
 }
