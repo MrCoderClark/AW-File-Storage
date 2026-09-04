@@ -63,7 +63,12 @@ export function buildAuth(env: AuthEnv) {
         await sendEmail(emailCfg, {
           to: user.email,
           subject: "Reset your password",
-          html: linkEmail("Reset your password:", url, "Reset password"),
+          html: linkEmail(
+            "We received a request to reset your AW File Storage password. Use the button below to choose a new one.",
+            url,
+            "Reset password",
+            user.name,
+          ),
         });
       },
     },
@@ -72,7 +77,12 @@ export function buildAuth(env: AuthEnv) {
         await sendEmail(emailCfg, {
           to: user.email,
           subject: "Verify your email",
-          html: linkEmail("Confirm your email address:", url, "Verify email"),
+          html: linkEmail(
+            "Please confirm your email address to finish setting up your AW File Storage account.",
+            url,
+            "Verify email",
+            user.name,
+          ),
         });
       },
     },

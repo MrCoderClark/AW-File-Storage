@@ -533,7 +533,7 @@ export async function sendMemberResetLink(opts: {
   const m = await getMemberInOrg(db, orgId, memberId);
   if (!m) throw new MemberError(404, "Member not found.");
   const [u] = await db
-    .select({ email: user.email })
+    .select({ email: user.email, name: user.name })
     .from(user)
     .where(eq(user.id, m.userId))
     .limit(1);
@@ -559,9 +559,10 @@ export async function sendMemberResetLink(opts: {
             to: u.email,
             subject: "Reset your password",
             html: linkEmail(
-              "An administrator asked you to reset your password:",
+              "An administrator asked you to reset your AW File Storage password. Use the button below to choose a new one.",
               url,
               "Reset password",
+              u.name,
             ),
           },
         );
