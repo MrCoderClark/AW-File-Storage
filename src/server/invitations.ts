@@ -337,32 +337,20 @@ export class InviteError extends Error {
 }
 
 /**
- * Accept an invitation: create the account for the invited email and add the
- * membership. Because global sign-up is disabled, account creation goes through
- * a sign-up-enabled Better Auth instance (same technique as the owner seed); the
- * invitation id is the unguessable capability that authorizes it.
+ * Create the account for `email` (the person sets `password`), or re-onboard an
+ * existing orphaned account, and return the userId. Shared by invite accept and
+ * provisioning accept (spec 0014). Global sign-up is disabled, so creation goes
+ * through a sign-up-enabled Better Auth instance; reaching here is authorized by
+ * the unguessable invite/provision id. Only resets the password of an account with
+ * NO membership anywhere, so it can never reset an active user's password.
  */
-export async function acceptInvite(opts: {
-  env: AuthEnv;
-  invitationId: string;
-  name: string;
-  password: string;
-}): Promise<{ email: string; orgId: string }> {
-  const { env, invitationId, name, password } = opts;
-  const db = buildDb(env.DB);
-
-  const [inv] = await db
-    .select()
-    .from(schema.invitation)
-    .where(
-      and(eq(schema.invitation.id, invitationId), eq(schema.invitation.status, "pending")),
-    )
-    .limit(1);
-  if (!inv) throw new Error("This invitation is invalid or has already been used.");
-  if (new Date(inv.expiresAt).getTime() < Date.now()) {
-    throw new Error("This invitation has expired.");
-  }
-
+export async function createOrOnboardUser(
+  env: AuthEnv,
+  db: ReturnType<typeof buildDb>,
+  email: string,
+  name: string,
+  password: string,
+): Promise<string> {
   const signupAuth = betterAuth({
     ...authSharedOptions,
     emailAndPassword: {
@@ -376,21 +364,14 @@ export async function acceptInvite(opts: {
     plugins: authPlugins,
   });
 
-  // A user with this email may already exist — e.g. they were a member before
-  // and were removed (removeMember deletes only the membership, never the user,
-  // so file history survives). Re-onboard them rather than failing on sign-up.
   const [existing] = await db
     .select({ id: schema.user.id })
     .from(schema.user)
-    .where(eq(schema.user.email, inv.email))
+    .where(eq(schema.user.email, email))
     .limit(1);
 
-  let userId: string;
   if (existing) {
-    userId = existing.id;
-    // Only reset the password when the account is orphaned (no membership
-    // anywhere), so an invite can never reset the password of a user who is
-    // still active in another organization.
+    const userId = existing.id;
     const [anyMembership] = await db
       .select({ id: schema.member.id })
       .from(schema.member)
@@ -424,22 +405,51 @@ export async function acceptInvite(opts: {
         .set({ name, emailVerified: true })
         .where(eq(schema.user.id, userId));
     }
-  } else {
-    await signupAuth.api.signUpEmail({
-      body: { email: inv.email, password, name },
-    });
-    // The invited email is verified by virtue of the invitation itself.
-    await db
-      .update(schema.user)
-      .set({ emailVerified: true })
-      .where(eq(schema.user.email, inv.email));
-    const [u] = await db
-      .select({ id: schema.user.id })
-      .from(schema.user)
-      .where(eq(schema.user.email, inv.email))
-      .limit(1);
-    userId = u.id;
+    return userId;
   }
+
+  await signupAuth.api.signUpEmail({ body: { email, password, name } });
+  await db
+    .update(schema.user)
+    .set({ emailVerified: true })
+    .where(eq(schema.user.email, email));
+  const [u] = await db
+    .select({ id: schema.user.id })
+    .from(schema.user)
+    .where(eq(schema.user.email, email))
+    .limit(1);
+  return u.id;
+}
+
+/**
+ * Accept an invitation: create the account for the invited email and add the
+ * membership. Because global sign-up is disabled, account creation goes through
+ * a sign-up-enabled Better Auth instance (same technique as the owner seed); the
+ * invitation id is the unguessable capability that authorizes it.
+ */
+export async function acceptInvite(opts: {
+  env: AuthEnv;
+  invitationId: string;
+  name: string;
+  password: string;
+}): Promise<{ email: string; orgId: string }> {
+  const { env, invitationId, name, password } = opts;
+  const db = buildDb(env.DB);
+
+  const [inv] = await db
+    .select()
+    .from(schema.invitation)
+    .where(
+      and(eq(schema.invitation.id, invitationId), eq(schema.invitation.status, "pending")),
+    )
+    .limit(1);
+  if (!inv) throw new Error("This invitation is invalid or has already been used.");
+  if (new Date(inv.expiresAt).getTime() < Date.now()) {
+    throw new Error("This invitation has expired.");
+  }
+
+  // Create or re-onboard the account (shared with provisioning accept, spec 0014).
+  const userId = await createOrOnboardUser(env, db, inv.email, name, password);
 
   // Add the membership (unless somehow already present in this org).
   const [alreadyMember] = await db

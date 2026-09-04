@@ -4,6 +4,7 @@ import {
   graphConfiguredForOrg,
   graphTestConnection,
 } from "@/server/graph";
+import { syncOrgDomains } from "@/server/domains";
 import { orgDbFor } from "@/server/org-db";
 import { encryptSecret } from "@/server/secret-box";
 import { requireApiRole } from "@/server/session";
@@ -131,6 +132,14 @@ export async function PUT(req: Request) {
       lastVerifiedAt: now,
     });
   }
+
+  // Best-effort: record the tenant's verified domains for domain-based
+  // provisioning (spec 0014). A failure here never fails the credential save.
+  await syncOrgDomains(
+    { DB: (env as unknown as Env).DB },
+    auth.actor.orgId,
+    creds,
+  ).catch(() => {});
 
   return Response.json({ ok: true, connected: true });
 }

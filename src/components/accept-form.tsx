@@ -15,7 +15,7 @@ export function AcceptForm({
 }: {
   invitationId: string;
   email: string;
-  role: string;
+  role?: string;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -64,10 +64,12 @@ export function AcceptForm({
         <p className="mt-1 rounded-[--radius-panel] border border-border bg-canvas px-3 py-2.5 text-sm text-slate-700">
           {email}
         </p>
-        <p className="mt-1 text-xs text-muted-500">
-          You&apos;re joining as{" "}
-          <span className="font-medium capitalize text-slate-700">{role}</span>.
-        </p>
+        {role && (
+          <p className="mt-1 text-xs text-muted-500">
+            You&apos;re joining as{" "}
+            <span className="font-medium capitalize text-slate-700">{role}</span>.
+          </p>
+        )}
       </div>
 
       <label className="flex flex-col gap-1">

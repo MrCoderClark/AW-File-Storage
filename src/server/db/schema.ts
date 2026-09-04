@@ -323,6 +323,52 @@ export const orgO365 = sqliteTable("org_o365", {
   updatedAt: updatedAt(),
 });
 
+// An organization's verified email domains (spec 0014). Populated from the org's
+// Microsoft 365 tenant (Graph GET /domains, verified only) when it configures
+// O365, or added manually by the platform owner. Drives domain-based provisioning:
+// an email whose domain matches maps to this org. One org per domain (unique);
+// consumer domains (gmail.com, …) are rejected in code. Additive table.
+export const orgDomains = sqliteTable(
+  "org_domains",
+  {
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    domain: text("domain").notNull(), // stored lowercased
+    source: text("source", { enum: ["o365", "manual"] }).notNull(),
+    verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("org_domains_domain_uq").on(t.domain),
+    index("org_domains_org_idx").on(t.orgId),
+  ],
+);
+
+// A platform-owner provisioning record (spec 0014): one email, one accept, N
+// memberships. `assignments` is a JSON array of { orgId, role }. Parallel to the
+// per-org `invitation` (org-admin) flow; its accept reuses the same account
+// creation, then adds every assignment atomically. Additive table.
+export const provision = sqliteTable(
+  "provision",
+  {
+    id: id(),
+    email: text("email").notNull(), // stored lowercased
+    status: text("status", {
+      enum: ["pending", "accepted", "cancelled"],
+    }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    // JSON: [{ "orgId": "...", "role": "admin" | "member" }, ...]
+    assignments: text("assignments").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("provision_email_status_idx").on(t.email, t.status)],
+);
+
 // Drives the per-account lockout in spec 0001 (AC-7). Keyed by user id.
 export const accountLock = sqliteTable("account_lock", {
   userId: text("user_id")
