@@ -127,6 +127,13 @@
       "when": 1788541131750,
       "tag": "0017_absurd_vengeance",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1788546040932,
+      "tag": "0018_overconfident_emma_frost",
+      "breakpoints": true
     }
   ]
 }
