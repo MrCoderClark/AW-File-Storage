@@ -56,8 +56,14 @@ export async function sendEmail(
  * transactional links (password reset, email verification). Same look as the
  * invitation, without the invite-specific copy. `intro` is a plain sentence.
  */
-export function linkEmail(intro: string, url: string, cta: string): string {
-  const content = `          <p style="margin:0 0 18px 0;">${escapeHtml(intro)}</p>
+export function linkEmail(
+  intro: string,
+  url: string,
+  cta: string,
+  name?: string | null,
+): string {
+  const content = `          <p style="margin:0 0 14px 0;">${greeting(name)}</p>
+          <p style="margin:0 0 18px 0;">${escapeHtml(intro)}</p>
           ${button(url, cta)}
           <p style="margin:18px 0 14px 0;font-size:14px;color:${BRAND.muted};">Or paste this link into your browser:<br><a href="${escapeHtml(url)}" style="color:${BRAND.link};word-break:break-all;">${escapeHtml(url)}</a></p>
           <p style="margin:0;">If you did not request this, you can safely ignore this email.</p>`;
@@ -93,6 +99,44 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/** Morning / afternoon / evening in New York (Eastern) time. */
+function partOfDayET(now: Date = new Date()): "morning" | "afternoon" | "evening" {
+  const hour =
+    Number(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        hour: "numeric",
+        hour12: false,
+      }).format(now),
+    ) % 24; // some runtimes render midnight as "24"
+  if (hour < 12) return "morning";
+  if (hour < 18) return "afternoon";
+  return "evening";
+}
+
+/** The recipient's first name (HTML-escaped), or "" when it is unknown. */
+function firstName(name?: string | null): string {
+  const first = (name ?? "").trim().split(/\s+/)[0];
+  return first ? escapeHtml(first) : "";
+}
+
+/**
+ * A time-aware greeting line: "Good morning, Joseph," — or, when the recipient's
+ * name is unknown (e.g. an invitation to someone with no account yet), just
+ * "Good morning,". Eastern time so it reads correctly for AW's staff.
+ */
+function greeting(name?: string | null): string {
+  const part = partOfDayET();
+  const label =
+    part === "morning"
+      ? "Good morning"
+      : part === "afternoon"
+        ? "Good afternoon"
+        : "Good evening";
+  const first = firstName(name);
+  return first ? `${label}, ${first},` : `${label},`;
 }
 
 /**
@@ -210,7 +254,7 @@ export function inviteEmail(opts: {
       ? "You are being added as an <strong>administrator</strong>, so you will also be able to manage people and settings."
       : "You are being added as a <strong>member</strong>.";
 
-  const content = `          <p style="margin:0 0 14px 0;">Hello,</p>
+  const content = `          <p style="margin:0 0 14px 0;">${greeting()}</p>
           <p style="margin:0 0 14px 0;">${
             opts.resent ? "Here is your invitation again. " : ""
           }${invitedBy} to <strong>AW File Storage</strong>, our secure place to store company files and publish contact cards.</p>
