@@ -84,13 +84,6 @@ const BRAND = {
 const FONT =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
-// The email logo is a SEPARATE, email-only asset: a hosted PNG, because email
-// clients (Outlook, Gmail) don't render SVG. It is generated from the site logo
-// (public/aw-file-storage-logo.png) for brand consistency, but the website keeps
-// using its own SVG (src/app/icon.svg) — that is untouched. Update this URL if the
-// app's domain changes.
-const LOGO_URL = "https://www.awvcard.com/aw-file-storage-logo.png";
-
 /** Escape text destined for HTML. Every interpolated value goes through this. */
 export function escapeHtml(value: string): string {
   return value
@@ -170,11 +163,8 @@ export function emailShell(opts: {
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid ${BRAND.border};border-radius:8px;overflow:hidden;">
         <tr>
           <td align="center" style="background-color:${BRAND.navy};padding:16px 24px;font-family:${FONT};font-size:17px;line-height:26px;color:#ffffff;">
-            <!-- Hosted PNG so it renders everywhere (Outlook/Gmail included). If a
-                 client blocks images, the empty alt keeps the wordmark clean. -->
-            <img src="${LOGO_URL}" width="26" height="26" alt="" style="vertical-align:middle;margin-right:9px;border:0;display:inline-block;">
-            <span style="font-weight:700;vertical-align:middle;">AW File Storage</span>
-            <span style="color:#9fb6d1;vertical-align:middle;"> | Secure. Scalable. Simple.</span>
+            <span style="font-weight:700;">AW File Storage</span>
+            <span style="color:#9fb6d1;"> | Secure. Scalable. Simple.</span>
           </td>
         </tr>
         <tr>
