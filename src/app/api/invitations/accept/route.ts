@@ -1,9 +1,12 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { type AuthEnv } from "@/server/auth";
-import { acceptInvite } from "@/server/invitations";
+import { acceptInvite, previewInvite } from "@/server/invitations";
+import { acceptProvision } from "@/server/provisioning";
 
-// Accept an invitation by creating the account for the invited email. No session
-// required — the unguessable invitation id is the capability that authorizes it.
+// Accept an invitation OR a platform-owner provision (spec 0005 / 0014) by creating
+// the account for the invited email. No session required — the unguessable id is the
+// capability that authorizes it. The same id space serves both: if it's a known
+// invitation we accept that (one org); otherwise we treat it as a provision (N orgs).
 // Password policy (12-char min + breach check) is enforced by the sign-up path.
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
@@ -15,14 +18,15 @@ export async function POST(req: Request) {
     return new Response("Invalid input", { status: 400 });
   }
 
-  const { env } = getCloudflareContext();
+  const env = getCloudflareContext().env as unknown as AuthEnv;
+  const id = body.invitationId;
   try {
-    const result = await acceptInvite({
-      env: env as unknown as AuthEnv,
-      invitationId: body.invitationId,
-      name: body.name,
-      password: body.password,
-    });
+    // Is the id an invitation? (valid/expired/used → yes; invalid → try provision)
+    const invite = await previewInvite(env, id);
+    const result =
+      invite.status !== "invalid"
+        ? await acceptInvite({ env, invitationId: id, name: body.name, password: body.password })
+        : await acceptProvision({ env, provisionId: id, name: body.name, password: body.password });
     return Response.json({ ok: true, email: result.email });
   } catch (e) {
     return Response.json(
