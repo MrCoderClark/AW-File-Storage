@@ -22,15 +22,10 @@ async function callCron(env: Env, path: string): Promise<void> {
 
 export default {
   async scheduled(
-    event: { cron?: string },
+    _event: unknown,
     env: Env,
     ctx: { waitUntil(p: Promise<unknown>): void },
   ) {
-    // Every 5 minutes: flush due scheduled emails (spec 0015 SCIM set-password).
-    if (event.cron === "*/5 * * * *") {
-      ctx.waitUntil(callCron(env, "/api/cron/flush-emails"));
-      return;
-    }
     // Nightly (0 3 * * *): sweep (spec 0003) + Office 365 reconcile (spec 0010).
     // Each is best effort; the O365 endpoint is a no-op unless the sync is configured.
     ctx.waitUntil(callCron(env, "/api/cron/cleanup"));
