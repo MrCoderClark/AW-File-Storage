@@ -11,6 +11,8 @@ vi.mock("../src/server/graph", async (orig) => {
   return {
     ...actual,
     listDirectoryUsers: vi.fn(),
+    listDeletedUsers: vi.fn(),
+    graphUserExists: vi.fn(),
     findUsersByEmail: vi.fn(),
     patchUserExtensionAttribute1: vi.fn(),
     getUserExtensionAttribute1: vi.fn(),
@@ -59,6 +61,8 @@ const BASE_ENV = {
 } as unknown as O365ProvisionEnv;
 
 const listUsers = vi.mocked(graph.listDirectoryUsers);
+const listDeleted = vi.mocked(graph.listDeletedUsers);
+const userExists = vi.mocked(graph.graphUserExists);
 const findUsers = vi.mocked(graph.findUsersByEmail);
 const patchAttr = vi.mocked(graph.patchUserExtensionAttribute1);
 
@@ -160,6 +164,10 @@ const enableOffboard = () =>
 
 beforeEach(async () => {
   listUsers.mockReset();
+  listDeleted.mockReset();
+  listDeleted.mockResolvedValue([]); // no deletions unless a test says so
+  userExists.mockReset();
+  userExists.mockResolvedValue(true); // users exist unless a test says otherwise
   findUsers.mockReset();
   patchAttr.mockReset();
   // syncCardToO365 matches the new card by email; return the same directory user.
@@ -307,6 +315,76 @@ describe("provisionCardsForOrg — offboard pass (spec 0017)", () => {
     const s = await provisionCardsForOrg(BASE_ENV, "org-a");
     expect(s.unpublished).toBe(0);
     expect((await db.select().from(files).where(eq(files.id, "manual1")))[0].visibility).toBe("public");
+  });
+
+  it("retracts a card for a HARD-DELETED user, matched by stored user id (spec 0019)", async () => {
+    await enableOffboard();
+    await insertCard({
+      id: "auto1", email: "angelina@aw.com", source: "o365_auto", o365UserId: "udel",
+      o365SyncedUrl: "https://contacts.awvcard.com/c/auto1.vcf",
+    });
+    listUsers.mockResolvedValue([]); // gone from the active directory
+    // In the recycle bin; mail is null (mangled), so only the id matches.
+    listDeleted.mockResolvedValue([{ id: "udel", mail: null }]);
+    const s = await provisionCardsForOrg(BASE_ENV, "org-a");
+    expect(s.unpublished).toBe(1);
+    const [card] = await db.select().from(files).where(eq(files.id, "auto1"));
+    expect(card.visibility).toBe("private");
+    expect(card.offboardedAt).toBeTruthy();
+    expect(patchAttr).toHaveBeenCalledWith(expect.anything(), "udel", null);
+  });
+
+  it("skips hard-delete detection when deletedItems is unavailable (no crash)", async () => {
+    await enableOffboard();
+    await insertCard({ id: "auto1", email: "gone@aw.com", source: "o365_auto", o365UserId: "udel" });
+    listUsers.mockResolvedValue([]);
+    listDeleted.mockRejectedValue(new Error("403 Forbidden")); // missing permission
+    const s = await provisionCardsForOrg(BASE_ENV, "org-a");
+    expect(s.unpublished).toBe(0); // couldn't detect the deletion, but didn't throw
+    expect((await db.select().from(files).where(eq(files.id, "auto1")))[0].visibility).toBe("public");
+  });
+
+  it("DELETES a card for a PERMANENTLY-deleted user (404 + confirmed not in recycle bin, spec 0019)", async () => {
+    await enableOffboard();
+    await insertCard({
+      id: "auto1", email: "purged@aw.com", source: "o365_auto", o365UserId: "upurged",
+    });
+    listUsers.mockResolvedValue([]); // not in the active directory
+    listDeleted.mockResolvedValue([]); // recycle-bin read OK, and NOT in it → permanent
+    userExists.mockResolvedValue(false); // GET /users/{id} → 404: provably gone
+    const s = await provisionCardsForOrg(BASE_ENV, "org-a");
+    expect(s.deleted).toBe(1); // deleted, not just retracted
+    expect(s.unpublished).toBe(0);
+    const [card] = await db.select().from(files).where(eq(files.id, "auto1"));
+    expect(card.deletedAt).toBeTruthy(); // hard-deleted — no 30-day grace
+  });
+
+  it("only RETRACTS (grace) a gone user when the recycle-bin read failed — can't confirm permanent", async () => {
+    await enableOffboard();
+    await insertCard({
+      id: "auto1", email: "gone@aw.com", source: "o365_auto", o365UserId: "ugone",
+    });
+    listUsers.mockResolvedValue([]);
+    listDeleted.mockRejectedValue(new Error("403")); // can't read recycle bin
+    userExists.mockResolvedValue(false); // the user is gone, but soft vs permanent is unknown
+    const s = await provisionCardsForOrg(BASE_ENV, "org-a");
+    expect(s.deleted).toBe(0);
+    expect(s.unpublished).toBe(1); // retracted with the 30-day grace, not deleted
+    const [card] = await db.select().from(files).where(eq(files.id, "auto1"));
+    expect(card.visibility).toBe("private");
+    expect(card.deletedAt).toBeNull();
+    expect(card.offboardedAt).toBeTruthy();
+  });
+
+  it("does NOT retract on a transient listing gap — the user still exists on lookup", async () => {
+    await enableOffboard();
+    await insertCard({ id: "auto1", email: "present@aw.com", source: "o365_auto", o365UserId: "upresent" });
+    listUsers.mockResolvedValue([]); // momentarily missing from the listing (glitch)
+    listDeleted.mockResolvedValue([]);
+    userExists.mockResolvedValue(true); // but the direct lookup finds them — not gone
+    const s = await provisionCardsForOrg(BASE_ENV, "org-a");
+    expect(s.unpublished).toBe(0);
+    expect((await db.select().from(files).where(eq(files.id, "auto1")))[0].visibility).toBe("public");
   });
 
   it("never treats an ABSENT user as offboarded (positive signal only)", async () => {

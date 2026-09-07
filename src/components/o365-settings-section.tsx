@@ -119,9 +119,15 @@ export function O365SettingsSection() {
     setOffboardMsg("");
     try {
       const res = await fetch("/api/settings/o365/provision", { method: "POST" });
-      const body = (await res.json()) as { unpublished?: number };
+      const body = (await res.json()) as {
+        unpublished?: number;
+        deleted?: number;
+      };
       if (!res.ok) throw new Error(String(res.status));
-      setOffboardMsg(`Retracted ${body.unpublished ?? 0} card(s).`);
+      setOffboardMsg(
+        `Retracted ${body.unpublished ?? 0} card(s)` +
+          (body.deleted ? `, deleted ${body.deleted} (permanent).` : "."),
+      );
       await load();
     } catch {
       setError("Could not check for offboarded users. Try again.");
