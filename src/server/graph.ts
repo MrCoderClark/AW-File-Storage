@@ -410,7 +410,60 @@ export async function patchUserExtensionAttribute1(
       onPremisesExtensionAttributes: { extensionAttribute1: value },
     }),
   });
+  // A deleted user no longer exists, so there is nothing to write or clear — treat
+  // 404 as a no-op success rather than an error (spec 0019). This is what turned a
+  // hard-deleted user's nightly reconcile into a recurring `sync_failed`.
+  if (res.status === 404) return;
   if (!res.ok) {
     throw new Error(`Graph PATCH user failed: ${res.status}`);
   }
+}
+
+/**
+ * Whether a user with this id currently exists in the tenant (spec 0019). A direct
+ * `GET /users/{id}` — 200 → true, **404 → false** (provably gone, e.g. permanently
+ * deleted). Throws on any other status so the caller can treat it as "uncertain" and
+ * NOT act. Used to confirm a permanent deletion before retracting a card, so a
+ * transient directory-listing gap never triggers a retraction.
+ */
+export async function graphUserExists(
+  c: GraphCreds,
+  userId: string,
+): Promise<boolean> {
+  const res = await graphFetch(c, `/users/${userId}?$select=id`);
+  if (res.status === 404) return false;
+  if (!res.ok) throw new Error(`Graph user existence check failed: ${res.status}`);
+  return true;
+}
+
+/** A soft-deleted directory user (Entra keeps these ~30 days). */
+export interface DeletedUser {
+  id: string;
+  mail: string | null;
+}
+
+/**
+ * Users that have been DELETED from the tenant (spec 0019), from Entra's recycle bin
+ * (`/directory/deletedItems/microsoft.graph.user`). A positive "this user was deleted"
+ * signal — used to offboard a hard-deleted user's card, without ever acting on mere
+ * absence from the active directory. Needs `User.Read.All`/`Directory.Read.All`; the
+ * caller treats a throw (e.g. missing permission) as "no deletions this run".
+ */
+export async function listDeletedUsers(c: GraphCreds): Promise<DeletedUser[]> {
+  const out: DeletedUser[] = [];
+  let path: string | null =
+    "/directory/deletedItems/microsoft.graph.user?$select=id,mail,userPrincipalName&$top=100";
+  let guard = 0;
+  while (path && guard++ < 200) {
+    const res = await graphFetch(c, path);
+    if (!res.ok) throw new Error(`Graph deletedItems query failed: ${res.status}`);
+    const data = (await res.json()) as {
+      value?: Array<{ id: string; mail: string | null }>;
+      "@odata.nextLink"?: string;
+    };
+    for (const u of data.value ?? []) out.push({ id: u.id, mail: u.mail ?? null });
+    const next = data["@odata.nextLink"];
+    path = next ? next.replace(GRAPH_BASE, "") : null;
+  }
+  return out;
 }
