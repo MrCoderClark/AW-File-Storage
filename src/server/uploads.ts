@@ -4,6 +4,7 @@ import {
   desc,
   eq,
   gt,
+  isNotNull,
   isNull,
   like,
   lt,
@@ -1093,15 +1094,20 @@ export async function publishVcardFromBytes(
 }
 
 /**
- * System unpublish for offboarding (spec 0016) — no actor / manage check, since it
- * is a scheduled job, not a user action. Removes the public object and marks the
- * card private; the slug is retired, not recycled. Idempotent. The caller then runs
- * the O365 sync to clear the user's CustomAttribute1.
+ * System unpublish (spec 0016/0017) — no actor / manage check, since it is a
+ * scheduled job, not a user action. Removes the public object and marks the card
+ * private; the slug is retired, not recycled. Idempotent. The caller then runs the
+ * O365 sync to clear the user's CustomAttribute1.
+ *
+ * When `offboarded` is set, this is an offboarding retraction (spec 0017): it also
+ * stamps `offboarded_at` (which starts the 30-day delete clock) and audits
+ * `card.offboarded` instead of `card.auto_unpublished`.
  */
 export async function autoUnpublishVcard(
   env: UploadEnv,
   orgId: string,
   fileId: string,
+  opts: { offboarded?: boolean } = {},
 ): Promise<void> {
   const cfg = r2Config(env);
   const db = buildDb(env.DB);
@@ -1112,12 +1118,75 @@ export async function autoUnpublishVcard(
   if (file.visibility !== "public" || !file.publicSlug) return; // already private
 
   await r2Delete(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(file.publicSlug));
-  await scoped.files.update(fileId, { visibility: "private", publishedAt: null });
+  await scoped.files.update(fileId, {
+    visibility: "private",
+    publishedAt: null,
+    ...(opts.offboarded ? { offboardedAt: new Date() } : {}),
+  });
   await scoped.audit.append({
     actorUserId: null,
-    action: "card.auto_unpublished",
+    action: opts.offboarded ? "card.offboarded" : "card.auto_unpublished",
     targetType: "file",
     targetId: fileId,
     metadataJson: JSON.stringify({ slug: file.publicSlug }),
   });
+}
+
+const OFFBOARD_GRACE_MS = 30 * 24 * 60 * 60 * 1000; // 30-day grace (spec 0017)
+
+/**
+ * Nightly purge (spec 0017): permanently (soft-)delete cards retracted by O365
+ * offboarding whose 30-day grace window has elapsed and that are still unpublished
+ * (a card re-published within the window has `offboarded_at` cleared, so it is
+ * spared). Cross-org system job; the public object was already removed at retract,
+ * and the private object is reclaimed by the existing cleanup sweep. Best effort.
+ */
+export async function purgeOffboardedCards(
+  env: UploadEnv,
+): Promise<{ deleted: number }> {
+  const db = buildDb(env.DB);
+  const cutoff = new Date(Date.now() - OFFBOARD_GRACE_MS);
+  const rows = await db
+    .select({
+      id: schema.files.id,
+      orgId: schema.files.orgId,
+      sizeBytes: schema.files.sizeBytes,
+    })
+    .from(schema.files)
+    .where(
+      and(
+        isNotNull(schema.files.offboardedAt),
+        lt(schema.files.offboardedAt, cutoff),
+        eq(schema.files.visibility, "private"),
+        isNull(schema.files.deletedAt),
+      ),
+    );
+  let deleted = 0;
+  for (const f of rows) {
+    try {
+      await db
+        .update(schema.files)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(eq(schema.files.id, f.id));
+      if (f.sizeBytes > 0) {
+        await db
+          .update(schema.organization)
+          .set({
+            storageUsedBytes: sql`max(0, ${schema.organization.storageUsedBytes} - ${f.sizeBytes})`,
+          })
+          .where(eq(schema.organization.id, f.orgId));
+      }
+      await orgDb(f.orgId, db).audit.append({
+        actorUserId: null,
+        action: "card.offboard_purged",
+        targetType: "file",
+        targetId: f.id,
+        metadataJson: JSON.stringify({}),
+      });
+      deleted++;
+    } catch {
+      // best effort; the next nightly run retries
+    }
+  }
+  return { deleted };
 }

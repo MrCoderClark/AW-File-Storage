@@ -33,9 +33,11 @@ export default {
       return;
     }
     // Nightly (0 3 * * *): abandoned-upload sweep (spec 0003) + Office 365 reconcile
-    // of already-published cards (spec 0010). Each is best effort; the O365 endpoint
-    // is a no-op unless an org has opted in and configured credentials.
+    // of already-published cards (spec 0010) + purge of offboarded cards past their
+    // 30-day grace window (spec 0017). Each is best effort; the O365 endpoints are a
+    // no-op unless an org has opted in and configured credentials.
     ctx.waitUntil(callCron(env, "/api/cron/cleanup"));
     ctx.waitUntil(callCron(env, "/api/cron/o365-sync"));
+    ctx.waitUntil(callCron(env, "/api/cron/o365-purge"));
   },
 };
