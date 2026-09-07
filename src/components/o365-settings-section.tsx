@@ -15,6 +15,7 @@ interface Summary {
 }
 interface State {
   enabled: boolean;
+  autoCardEnabled: boolean;
   configured: boolean;
   summary: Summary;
 }
@@ -23,7 +24,9 @@ export function O365SettingsSection() {
   const [state, setState] = useState<State | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [provisioning, setProvisioning] = useState(false);
   const [msg, setMsg] = useState("");
+  const [provisionMsg, setProvisionMsg] = useState("");
   const [error, setError] = useState("");
 
   async function load() {
@@ -61,6 +64,28 @@ export function O365SettingsSection() {
     }
   }
 
+  async function toggleAutoCard(next: boolean) {
+    if (!state) return;
+    setSaving(true);
+    setError("");
+    setMsg("");
+    const prev = state.autoCardEnabled;
+    setState({ ...state, autoCardEnabled: next });
+    try {
+      const res = await fetch("/api/settings/o365", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoCardEnabled: next }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      setState({ ...state, autoCardEnabled: prev });
+      setError("Could not save. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function syncNow() {
     setSyncing(true);
     setError("");
@@ -72,13 +97,38 @@ export function O365SettingsSection() {
       setMsg(
         body.enabled === false
           ? "Sync is off (enable it and set the credentials first)."
-          : `Synced ${body.processed ?? 0} published cards.`,
+          : `Re-synced ${body.processed ?? 0} existing cards.`,
       );
       await load(); // refresh the summary
     } catch {
       setError("Sync failed. Try again.");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  // Provision new O365 users on demand (spec 0016): create cards for licensed users
+  // added since the feature was enabled, and unpublish auto-cards for offboarded users.
+  async function provisionNow() {
+    setProvisioning(true);
+    setError("");
+    setProvisionMsg("");
+    try {
+      const res = await fetch("/api/settings/o365/provision", { method: "POST" });
+      const body = (await res.json()) as {
+        created?: number;
+        unpublished?: number;
+      };
+      if (!res.ok) throw new Error(String(res.status));
+      setProvisionMsg(
+        `Created ${body.created ?? 0} new card(s)` +
+          (body.unpublished ? `, unpublished ${body.unpublished}.` : "."),
+      );
+      await load();
+    } catch {
+      setError("Could not check for new users. Try again.");
+    } finally {
+      setProvisioning(false);
     }
   }
 
@@ -127,28 +177,89 @@ export function O365SettingsSection() {
           <p className="mt-3 text-xs text-muted-500">Loading…</p>
         )}
         {error && <p className="mt-3 text-xs text-danger-600">{error}</p>}
+
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void syncNow()}
+            disabled={syncing || state?.enabled !== true}
+            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-canvas disabled:opacity-50"
+          >
+            {syncing ? "Syncing…" : "Sync existing cards"}
+          </button>
+          {msg && <span className="text-xs text-muted-500">{msg}</span>}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-[--radius-panel] border border-border bg-surface p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-800">
+              Auto-create contact cards from Office 365 users
+            </p>
+            <p className="mt-1 text-sm text-muted-500">
+              When on, a contact card is created and published automatically for each
+              licensed user <strong>added to your Microsoft tenant from now on</strong>
+              , built from their directory details, with its link written into their
+              CustomAttribute1 — within minutes of their mailbox being ready. Existing
+              users are not affected. Cards are unpublished automatically when a user
+              is disabled or unlicensed.
+            </p>
+          </div>
+          <Switch
+            checked={state?.autoCardEnabled === true}
+            disabled={
+              state === null ||
+              saving ||
+              state?.configured === false ||
+              state?.enabled === false
+            }
+            onChange={toggleAutoCard}
+            label="Auto-create contact cards from Office 365 users"
+          />
+        </div>
+
+        {state?.autoCardEnabled ? (
+          <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            This <strong>publishes a public contact card</strong> (name, title, phone,
+            email, address) for each licensed user created from now on — existing users
+            are not touched. Turn it off to stop creating new cards; cards already
+            created stay published until removed.
+          </p>
+        ) : (
+          state !== null &&
+          (state.configured === false || state.enabled === false) && (
+            <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              Connect your Microsoft 365 and turn on “Sync card links to Office 365”
+              above before enabling this.
+            </p>
+          )
+        )}
+
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void provisionNow()}
+            disabled={provisioning || state?.autoCardEnabled !== true}
+            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-canvas disabled:opacity-50"
+          >
+            {provisioning ? "Checking…" : "Check for new users now"}
+          </button>
+          {provisionMsg && (
+            <span className="text-xs text-muted-500">{provisionMsg}</span>
+          )}
+        </div>
       </div>
 
       {s && (
         <div className="mt-4 rounded-[--radius-panel] border border-border bg-surface p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-800">Status</h2>
-            <button
-              type="button"
-              onClick={() => void syncNow()}
-              disabled={syncing || state?.enabled !== true}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-canvas disabled:opacity-50"
-            >
-              {syncing ? "Syncing…" : "Sync all now"}
-            </button>
-          </div>
+          <h2 className="text-sm font-semibold text-slate-800">Status</h2>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="Synced" value={s.synced} tone="ok" />
             <Stat label="No match" value={s.no_match} tone="warn" />
             <Stat label="Ambiguous" value={s.ambiguous} tone="warn" />
             <Stat label="Errors" value={s.error} tone="bad" />
           </div>
-          {msg && <p className="mt-3 text-xs text-muted-500">{msg}</p>}
         </div>
       )}
     </div>

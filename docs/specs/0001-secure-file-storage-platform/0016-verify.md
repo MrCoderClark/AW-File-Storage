@@ -19,6 +19,10 @@ are captured.
   existing card** → exactly one live published vCard is created with
   `source = 'o365_auto'` and `o365UserId` set, its public URL is written to
   CustomAttribute1, and `card.auto_created` is audited.
+- **Forward-only / no backfill (AC-2b)** — a user whose `createdDateTime` is **before**
+  the org's cutoff is **skipped** (no card), even though enabled + licensed + mailboxed;
+  a user created **at/after** the cutoff is provisioned. Proves enabling never
+  backfills existing staff.
 - **Mailbox-readiness skip (AC-2)** — a user with `mail` empty (mailbox not ready) →
   **no card**, no error; a later run once `mail` is populated creates it. Proves the
   "wait for the mailbox" behavior is detection, not a timer.
@@ -44,27 +48,30 @@ are captured.
 ## Migration check (AC-9)
 
 Inspect the generated migration before applying: it must be **`ADD COLUMN` only** —
-`org_settings.o365_auto_card_enabled` (default 0) and `file.source` (default
-`'manual'`) — with **no `CREATE TABLE`…copy…`DROP`** rebuild of any existing table
-(gotcha #9). Apply `--local`, run the suite, then `--remote`.
+`org_settings.o365_auto_card_enabled` (default 0), `org_settings.o365_auto_card_since`
+(nullable), and `file.source` (default `'manual'`) — with **no `CREATE TABLE`…copy…`DROP`**
+rebuild of any existing table (gotcha #9). Apply `--local`, run the suite, then `--remote`.
 
 ## Build
 
 `npx opennextjs-cloudflare build` bundles the new route + server module. Redeploy the
-**companion cron worker** so the new `*/10 * * * *` trigger registers
+**companion cron worker** so the new `0 13 * * 1-5` trigger registers
 (`npx wrangler deploy --config cron/wrangler.jsonc`); confirm both `0 3 * * *` and
-`*/10 * * * *` show under the worker's Triggers.
+`0 13 * * 1-5` show under the worker's Triggers.
 
 ## Manual (one real tenant)
 
 1. In an org with connected O365 credentials, enable **"Auto-create contact cards from
    Office 365 users"**; confirm the warning copy is shown and the toggle is disabled
    until credentials are connected.
-2. Create a **licensed** test user in that Microsoft tenant.
-3. Within ~10 minutes (a poll tick after the mailbox provisions), confirm: a published
-   card exists in the app (Files, marked auto-created), its landing page + `.vcf`
-   resolve, and the user's **CustomAttribute1** holds the public URL.
-4. Confirm re-running "Sync all now" does **not** create a duplicate.
+2. Create a **licensed** test user in that Microsoft tenant **after** enabling (this
+   is the forward-only path). Confirm a **pre-existing** user does **not** get a card.
+3. Click **"Check for new users now"** (the weekday poll is only a daily catch-up) —
+   confirm: a published card exists in the app (Files, uploader shows **"Integration"**),
+   its landing page + `.vcf` resolve, and the user's **CustomAttribute1** holds the
+   public URL.
+4. Confirm re-running **"Check for new users now"** does **not** create a duplicate,
+   and **"Sync existing cards"** only re-asserts existing cards (creates none).
 5. **Disable** (or unlicense) that user in Entra; within a sweep, confirm the card is
    **unpublished** and CustomAttribute1 is **cleared**.
 6. Confirm a **manually** created card for a different person is unaffected by both

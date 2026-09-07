@@ -12,7 +12,7 @@ export async function GET() {
   if (!auth.ok) return auth.response;
   const { env } = getCloudflareContext();
   const scoped = orgDbFor(auth.actor.orgId, env.DB);
-  const { o365SyncEnabled } = await scoped.settings.get();
+  const { o365SyncEnabled, o365AutoCardEnabled } = await scoped.settings.get();
   const configured = Boolean(await scoped.graphCreds.get());
   const summary = await o365Summary(
     env as unknown as O365SyncEnv,
@@ -21,24 +21,37 @@ export async function GET() {
   return Response.json({
     ok: true,
     enabled: o365SyncEnabled,
+    autoCardEnabled: o365AutoCardEnabled,
     configured,
     summary,
   });
 }
 
+// PUT flips either toggle: { enabled } for the URL sync, { autoCardEnabled } for
+// directory auto-provisioning (spec 0016). Either or both may be present.
 export async function PUT(req: Request) {
   const auth = await requireApiRole("admin");
   if (!auth.ok) return auth.response;
-  const body = (await req.json().catch(() => ({}))) as { enabled?: boolean };
-  if (typeof body.enabled !== "boolean") {
+  const body = (await req.json().catch(() => ({}))) as {
+    enabled?: boolean;
+    autoCardEnabled?: boolean;
+  };
+  if (
+    typeof body.enabled !== "boolean" &&
+    typeof body.autoCardEnabled !== "boolean"
+  ) {
     return Response.json(
-      { ok: false, error: "enabled (boolean) is required." },
+      { ok: false, error: "enabled and/or autoCardEnabled (boolean) required." },
       { status: 400 },
     );
   }
   const { env } = getCloudflareContext();
-  await orgDbFor(auth.actor.orgId, env.DB).settings.setO365SyncEnabled(
-    body.enabled,
-  );
+  const scoped = orgDbFor(auth.actor.orgId, env.DB);
+  if (typeof body.enabled === "boolean") {
+    await scoped.settings.setO365SyncEnabled(body.enabled);
+  }
+  if (typeof body.autoCardEnabled === "boolean") {
+    await scoped.settings.setO365AutoCardEnabled(body.autoCardEnabled);
+  }
   return Response.json({ ok: true });
 }

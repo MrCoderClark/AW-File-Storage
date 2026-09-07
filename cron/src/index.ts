@@ -22,12 +22,19 @@ async function callCron(env: Env, path: string): Promise<void> {
 
 export default {
   async scheduled(
-    _event: unknown,
+    event: { cron?: string },
     env: Env,
     ctx: { waitUntil(p: Promise<unknown>): void },
   ) {
-    // Nightly (0 3 * * *): sweep (spec 0003) + Office 365 reconcile (spec 0010).
-    // Each is best effort; the O365 endpoint is a no-op unless the sync is configured.
+    // Weekdays at 13:00 UTC (~9am ET): auto-provision cards from the O365 directory
+    // (spec 0016) — a once-a-day catch-up; same-day hires use the in-app button.
+    if (event.cron === "0 13 * * 1-5") {
+      ctx.waitUntil(callCron(env, "/api/cron/o365-provision"));
+      return;
+    }
+    // Nightly (0 3 * * *): abandoned-upload sweep (spec 0003) + Office 365 reconcile
+    // of already-published cards (spec 0010). Each is best effort; the O365 endpoint
+    // is a no-op unless an org has opted in and configured credentials.
     ctx.waitUntil(callCron(env, "/api/cron/cleanup"));
     ctx.waitUntil(callCron(env, "/api/cron/o365-sync"));
   },
