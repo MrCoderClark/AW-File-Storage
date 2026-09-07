@@ -141,20 +141,49 @@ async function isLastActiveOwner(
   return (await countOtherActiveOwners(db, orgId, m.id)) === 0;
 }
 
-/** Change a member's role (spec 0005 AC-4). Guards: self (AC-6), last owner (AC-5). */
+/**
+ * Owner is a strictly higher tier than admin (spec 0021): only an owner may act
+ * on an account that is currently an owner. Guards the account-security actions
+ * (password set, reset link, session revoke, 2FA reset) so an admin cannot take
+ * over or weaken an owner account. Throws 403 otherwise.
+ */
+function assertOwnerActionAllowed(
+  actorRole: OrgRole,
+  target: { role: string | null },
+): void {
+  if (target.role === "owner" && actorRole !== "owner") {
+    throw new MemberError(403, "Only an owner can manage an owner's account.");
+  }
+}
+
+/**
+ * Change a member's role (spec 0005 AC-4). Guards: self (AC-6), last owner (AC-5),
+ * and the owner-tier restriction (spec 0021): only an owner may grant the owner
+ * role or change an account that is currently an owner.
+ */
 export async function changeMemberRole(opts: {
   env: MemberEnv;
   orgId: string;
   actorUserId: string;
+  actorRole: OrgRole;
   memberId: string;
   newRole: OrgRole;
 }): Promise<void> {
-  const { env, orgId, actorUserId, memberId, newRole } = opts;
+  const { env, orgId, actorUserId, actorRole, memberId, newRole } = opts;
   const db = buildDb(env.DB);
   const m = await getMemberInOrg(db, orgId, memberId);
   if (!m) throw new MemberError(404, "Member not found.");
   if (m.userId === actorUserId) {
     throw new MemberError(409, "You cannot change your own role.");
+  }
+  // Owner is a strictly higher tier than admin (spec 0021): only an owner may
+  // mint another owner or alter an existing owner. Without this an admin could
+  // promote a second account they control to owner and escalate.
+  if (newRole === "owner" && actorRole !== "owner") {
+    throw new MemberError(403, "Only an owner can grant the owner role.");
+  }
+  if (m.role === "owner" && actorRole !== "owner") {
+    throw new MemberError(403, "Only an owner can change an owner's role.");
   }
   if (m.role === newRole) return; // no-op
 
@@ -188,14 +217,19 @@ export async function removeMember(opts: {
   env: MemberEnv;
   orgId: string;
   actorUserId: string;
+  actorRole: OrgRole;
   memberId: string;
 }): Promise<void> {
-  const { env, orgId, actorUserId, memberId } = opts;
+  const { env, orgId, actorUserId, actorRole, memberId } = opts;
   const db = buildDb(env.DB);
   const m = await getMemberInOrg(db, orgId, memberId);
   if (!m) throw new MemberError(404, "Member not found.");
   if (m.userId === actorUserId) {
     throw new MemberError(409, "You cannot remove your own account.");
+  }
+  // Only an owner may remove an owner (spec 0021).
+  if (m.role === "owner" && actorRole !== "owner") {
+    throw new MemberError(403, "Only an owner can remove an owner.");
   }
   if (await isLastActiveOwner(db, orgId, m)) {
     throw new MemberError(
@@ -226,15 +260,20 @@ export async function setMemberStatus(opts: {
   env: MemberEnv;
   orgId: string;
   actorUserId: string;
+  actorRole: OrgRole;
   memberId: string;
   status: "active" | "suspended";
 }): Promise<void> {
-  const { env, orgId, actorUserId, memberId, status } = opts;
+  const { env, orgId, actorUserId, actorRole, memberId, status } = opts;
   const db = buildDb(env.DB);
   const m = await getMemberInOrg(db, orgId, memberId);
   if (!m) throw new MemberError(404, "Member not found.");
   if (m.userId === actorUserId) {
     throw new MemberError(409, "You cannot change your own status.");
+  }
+  // Only an owner may suspend/reactivate an owner (spec 0021).
+  if (m.role === "owner" && actorRole !== "owner") {
+    throw new MemberError(403, "Only an owner can change an owner's status.");
   }
   if ((m.status ?? "active") === status) return; // no-op
 
@@ -414,12 +453,14 @@ export async function revokeMemberSessions(opts: {
   env: MemberEnv;
   orgId: string;
   actorUserId: string;
+  actorRole: OrgRole;
   memberId: string;
 }): Promise<number> {
-  const { env, orgId, actorUserId, memberId } = opts;
+  const { env, orgId, actorUserId, actorRole, memberId } = opts;
   const db = buildDb(env.DB);
   const m = await getMemberInOrg(db, orgId, memberId);
   if (!m) throw new MemberError(404, "Member not found.");
+  assertOwnerActionAllowed(actorRole, m);
 
   const existing = await db
     .select({ id: session.id })
@@ -446,12 +487,14 @@ export async function resetMemberTwoFactor(opts: {
   env: MemberEnv;
   orgId: string;
   actorUserId: string;
+  actorRole: OrgRole;
   memberId: string;
 }): Promise<void> {
-  const { env, orgId, actorUserId, memberId } = opts;
+  const { env, orgId, actorUserId, actorRole, memberId } = opts;
   const db = buildDb(env.DB);
   const m = await getMemberInOrg(db, orgId, memberId);
   if (!m) throw new MemberError(404, "Member not found.");
+  assertOwnerActionAllowed(actorRole, m);
 
   await db.delete(twoFactor).where(eq(twoFactor.userId, m.userId));
   await db
@@ -479,13 +522,16 @@ export async function adminSetPassword(opts: {
   env: AuthEnv;
   orgId: string;
   actorUserId: string;
+  actorRole: OrgRole;
   memberId: string;
   newPassword: string;
 }): Promise<void> {
-  const { env, orgId, actorUserId, memberId, newPassword } = opts;
+  const { env, orgId, actorUserId, actorRole, memberId, newPassword } = opts;
   const db = buildDb(env.DB);
   const m = await getMemberInOrg(db, orgId, memberId);
   if (!m) throw new MemberError(404, "Member not found.");
+  // An admin setting an owner's password would be a direct account takeover (spec 0021).
+  assertOwnerActionAllowed(actorRole, m);
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
     throw new MemberError(
       400,
@@ -526,12 +572,15 @@ export async function sendMemberResetLink(opts: {
   env: AuthEnv;
   orgId: string;
   actorUserId: string;
+  actorRole: OrgRole;
   memberId: string;
 }): Promise<{ email: string; url: string | null }> {
-  const { env, orgId, actorUserId, memberId } = opts;
+  const { env, orgId, actorUserId, actorRole, memberId } = opts;
   const db = buildDb(env.DB);
   const m = await getMemberInOrg(db, orgId, memberId);
   if (!m) throw new MemberError(404, "Member not found.");
+  // Returning an owner's reset link to an admin would be an account takeover (spec 0021).
+  assertOwnerActionAllowed(actorRole, m);
   const [u] = await db
     .select({ email: user.email, name: user.name })
     .from(user)

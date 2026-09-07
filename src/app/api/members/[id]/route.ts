@@ -78,6 +78,7 @@ export async function PATCH(
     env,
     orgId: auth.actor.orgId,
     actorUserId: auth.actor.userId,
+    actorRole: auth.actor.role,
     memberId: id,
   };
   try {
@@ -120,6 +121,7 @@ export async function DELETE(
       env: env as unknown as { DB: D1Database },
       orgId: auth.actor.orgId,
       actorUserId: auth.actor.userId,
+      actorRole: auth.actor.role,
       memberId: id,
     });
     return Response.json({ ok: true });
