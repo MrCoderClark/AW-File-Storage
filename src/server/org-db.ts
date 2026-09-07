@@ -1,14 +1,29 @@
-import { and, desc, eq, gte, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  like,
+  lt,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { buildDb, getDb, type Db } from "./db";
 import {
   auditEvents,
   cardStatDaily,
   files,
   fileVersions,
+  member,
   orgO365,
   orgSettings,
   orgSocialLinks,
   uploadSessions,
+  user,
 } from "./db/schema";
 import { uuidv7 } from "./id";
 
@@ -158,6 +173,163 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         .where(eq(auditEvents.orgId, orgId))
         .orderBy(desc(auditEvents.createdAt))
         .limit(opts.limit ?? 100);
+    },
+    /**
+     * The admin Activity Logs feed (spec 0018): filtered, keyset-paginated, with the
+     * actor's name joined. Cursor is [createdAt-ms, id] for a stable desc order.
+     */
+    async listPage(opts: {
+      sinceMs?: number;
+      actions?: string[];
+      q?: string;
+      cursor?: { at: number; id: string } | null;
+      limit?: number;
+    }) {
+      const limit = Math.min(opts.limit ?? 40, 100);
+      const conds: SQL[] = [eq(auditEvents.orgId, orgId)];
+      if (opts.sinceMs) {
+        conds.push(gte(auditEvents.createdAt, new Date(opts.sinceMs)));
+      }
+      if (opts.actions?.length) {
+        conds.push(inArray(auditEvents.action, opts.actions));
+      }
+      if (opts.q?.trim()) {
+        const pat = `%${opts.q.trim()}%`;
+        const m = or(
+          like(auditEvents.action, pat),
+          like(auditEvents.targetId, pat),
+          like(auditEvents.metadataJson, pat),
+          like(user.name, pat),
+        );
+        if (m) conds.push(m);
+      }
+      if (opts.cursor) {
+        const at = new Date(opts.cursor.at);
+        // (createdAt, id) strictly before the cursor, for a desc keyset page.
+        const c = or(
+          lt(auditEvents.createdAt, at),
+          and(eq(auditEvents.createdAt, at), lt(auditEvents.id, opts.cursor.id)),
+        );
+        if (c) conds.push(c);
+      }
+      const rows = await db
+        .select({
+          id: auditEvents.id,
+          action: auditEvents.action,
+          targetType: auditEvents.targetType,
+          targetId: auditEvents.targetId,
+          metadataJson: auditEvents.metadataJson,
+          createdAt: auditEvents.createdAt,
+          actorId: auditEvents.actorUserId,
+          actorName: user.name,
+        })
+        .from(auditEvents)
+        .leftJoin(user, eq(user.id, auditEvents.actorUserId))
+        .where(and(...conds))
+        .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
+        .limit(limit + 1);
+      const hasMore = rows.length > limit;
+      const items = rows.slice(0, limit);
+
+      // Resolve each event's target id to a human name (a card's contact, a member's
+      // person, a user), so the log shows "Sarah K." instead of a raw UUID.
+      const labels = new Map<string, string>();
+      const idsOf = (type: string) =>
+        items
+          .filter((i) => i.targetType === type && i.targetId)
+          .map((i) => i.targetId as string);
+      const fileIds = idsOf("file");
+      const memberIds = idsOf("member");
+      const userIds = idsOf("user");
+      if (fileIds.length) {
+        const fs = await db
+          .select({ id: files.id, name: files.contactName, orig: files.originalName })
+          .from(files)
+          .where(and(eq(files.orgId, orgId), inArray(files.id, fileIds)));
+        for (const f of fs) labels.set(f.id, f.name || f.orig);
+      }
+      if (memberIds.length) {
+        const ms = await db
+          .select({ id: member.id, name: user.name, email: user.email })
+          .from(member)
+          .leftJoin(user, eq(user.id, member.userId))
+          .where(
+            and(eq(member.organizationId, orgId), inArray(member.id, memberIds)),
+          );
+        for (const m of ms) labels.set(m.id, m.name || m.email || m.id);
+      }
+      if (userIds.length) {
+        const us = await db
+          .select({ id: user.id, name: user.name, email: user.email })
+          .from(user)
+          .where(inArray(user.id, userIds));
+        for (const u of us) labels.set(u.id, u.name || u.email);
+      }
+
+      const withLabels = items.map((i) => ({
+        ...i,
+        targetLabel: i.targetId ? (labels.get(i.targetId) ?? null) : null,
+      }));
+      const last = items[items.length - 1];
+      return {
+        items: withLabels,
+        nextCursor:
+          hasMore && last ? { at: last.createdAt.getTime(), id: last.id } : null,
+      };
+    },
+    /** Header stats for the Activity Logs view (spec 0018). */
+    async stats(): Promise<{
+      totalToday: number;
+      o365SuccessRate: number;
+      activeVcards: number;
+    }> {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const [today] = await db
+        .select({ n: count() })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.orgId, orgId),
+            gte(auditEvents.createdAt, startOfToday),
+          ),
+        );
+      const o365 = await db
+        .select({ action: auditEvents.action, n: count() })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.orgId, orgId),
+            inArray(auditEvents.action, [
+              "o365.synced",
+              "o365.cleared",
+              "o365.sync_failed",
+            ]),
+          ),
+        )
+        .groupBy(auditEvents.action);
+      let ok = 0;
+      let bad = 0;
+      for (const r of o365) {
+        if (r.action === "o365.sync_failed") bad += Number(r.n);
+        else ok += Number(r.n);
+      }
+      const [vc] = await db
+        .select({ n: count() })
+        .from(files)
+        .where(
+          and(
+            eq(files.orgId, orgId),
+            eq(files.kind, "vcard"),
+            eq(files.visibility, "public"),
+            isNull(files.deletedAt),
+          ),
+        );
+      return {
+        totalToday: Number(today?.n ?? 0),
+        o365SuccessRate: ok + bad > 0 ? ok / (ok + bad) : 1,
+        activeVcards: Number(vc?.n ?? 0),
+      };
     },
   };
 
