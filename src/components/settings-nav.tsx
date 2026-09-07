@@ -25,7 +25,6 @@ const ADMIN: NavItem[] = [
 
 const PLATFORM: NavItem[] = [
   { href: "/settings/provisioning", label: "Provisioning" },
-  { href: "/settings/scim", label: "SCIM provisioning" },
 ];
 
 export function SettingsNav({

@@ -79,6 +79,11 @@ export const files = sqliteTable(
     // Persisted coarse type (FileCategory in lib/file-type.ts), so the Files
     // "Filter by type" control is an indexable WHERE rather than a client guess.
     category: text("category"),
+    // Provenance (spec 0016): 'manual' for every human-created/uploaded file (the
+    // default, and what all existing rows are); 'o365_auto' marks a card that was
+    // auto-provisioned from the Office 365 directory, so offboarding and the
+    // non-clobber rule can tell auto cards from human-authored ones.
+    source: text("source").notNull().default("manual"),
     // Office 365 sync state (spec 0010): the card's public URL is written into the
     // matched staff member's Exchange CustomAttribute1 via Microsoft Graph. All
     // null until a sync runs; only meaningful for published vCards.
@@ -297,6 +302,17 @@ export const orgSettings = sqliteTable("org_settings", {
   o365SyncEnabled: integer("o365_sync_enabled", { mode: "boolean" })
     .notNull()
     .default(false),
+  // Auto-create + publish a contact card from each licensed O365 user's directory
+  // details, and keep it in sync (spec 0016). Off by default; also needs
+  // o365SyncEnabled on + the org's own credentials. Opt-in because it publishes staff
+  // PII to public URLs.
+  o365AutoCardEnabled: integer("o365_auto_card_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  // The cutoff for auto-provisioning (spec 0016): only O365 users CREATED at/after
+  // this instant get a card, so enabling the feature never backfills existing staff.
+  // Set to "now" each time the toggle is turned on.
+  o365AutoCardSince: integer("o365_auto_card_since", { mode: "timestamp_ms" }),
   updatedAt: updatedAt(),
 });
 
@@ -380,45 +396,3 @@ export const accountLock = sqliteTable("account_lock", {
   lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
   lockLevel: integer("lock_level").notNull().default(0),
 });
-
-// Per-org SCIM bearer token (spec 0015). One config per org. Only the token's
-// SHA-256 HASH is stored (never the token itself); a presented bearer is hashed
-// and looked up here to resolve the org. Generated/rotated by the platform owner.
-// Additive table.
-export const scimToken = sqliteTable(
-  "scim_token",
-  {
-    orgId: text("org_id")
-      .primaryKey()
-      .references(() => organization.id, { onDelete: "cascade" }),
-    tokenHash: text("token_hash").notNull(),
-    active: integer("active", { mode: "boolean" }).notNull().default(true),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => user.id),
-    createdAt: createdAt(),
-    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
-  },
-  (t) => [uniqueIndex("scim_token_hash_uq").on(t.tokenHash)],
-);
-
-// Deferred email queue (spec 0015). A SCIM-created user's Exchange mailbox isn't
-// ready instantly, so the "set your password" email is scheduled ~5 min out and
-// sent by a cron flush once due. Additive table.
-export const pendingEmail = sqliteTable(
-  "pending_email",
-  {
-    id: id(),
-    kind: text("kind").notNull(), // 'scim_set_password'
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    orgId: text("org_id")
-      .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
-    sendAfter: integer("send_after", { mode: "timestamp_ms" }).notNull(),
-    sentAt: integer("sent_at", { mode: "timestamp_ms" }),
-    createdAt: createdAt(),
-  },
-  (t) => [index("pending_email_due_idx").on(t.sentAt, t.sendAfter)],
-);
