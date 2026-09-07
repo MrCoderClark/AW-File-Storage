@@ -374,6 +374,7 @@ const fileListColumns = {
   publicSlug: schema.files.publicSlug,
   uploadedBy: schema.files.uploadedBy,
   uploaderName: schema.user.name,
+  source: schema.files.source,
   contactName: schema.files.contactName,
   contactOrg: schema.files.contactOrg,
   createdAt: schema.files.createdAt,
@@ -392,6 +393,7 @@ interface FileListRow {
   publicSlug: string | null;
   uploadedBy: string;
   uploaderName: string | null;
+  source: string;
   contactName: string | null;
   contactOrg: string | null;
   createdAt: Date;
@@ -420,7 +422,10 @@ function toListItem(
           // session there and never counts it, so no flag is needed (spec 0009).
           `/c/${f.publicSlug}`
         : undefined,
-    uploadedByName: f.uploaderName ?? "Unknown",
+    // Cards created by the O365 auto-provisioning job show as "Integration"
+    // rather than the org owner they are technically attributed to (spec 0016).
+    uploadedByName:
+      f.source === "o365_auto" ? "Integration" : (f.uploaderName ?? "Unknown"),
     contactName: f.contactName,
     contactOrg: f.contactOrg,
     createdAt: f.createdAt,
@@ -988,4 +993,131 @@ async function publishVcard(
     visibility: "public",
     publicUrl: publicUrlFor(env, slug),
   };
+}
+
+export interface AutoPublishResult {
+  created: boolean; // false = an identical live card already existed (no-op)
+  fileId: string;
+  publicUrl?: string;
+}
+
+/**
+ * Publish a vCard built entirely in the Worker (spec 0016 auto-provisioning) — no
+ * upload session, no staging bytes. Creates a fresh public `file` row attributed to
+ * `uploadedBy`, tagged `source` (e.g. 'o365_auto'), writes the durable private +
+ * public R2 objects, and denormalises the searchable contact fields. Idempotent on
+ * content: an identical live card in the org is a no-op (`created:false`). Throws
+ * only on invalid vCard bytes.
+ */
+export async function publishVcardFromBytes(
+  env: UploadEnv,
+  orgId: string,
+  vcf: string,
+  opts: { uploadedBy: string; source: string; o365UserId?: string | null },
+): Promise<AutoPublishResult> {
+  const cfg = r2Config(env);
+  const db = buildDb(env.DB);
+  const scoped = orgDb(orgId, db);
+
+  const result = validateVcard(vcf);
+  if (!result.ok) throw new UploadError(422, result.reason);
+
+  const normalizedSize = new TextEncoder().encode(result.normalized).length;
+  const checksum = await sha256Hex(result.normalized);
+
+  // Idempotent on content: an identical live card in this org → no-op (respects the
+  // (org_id, checksum) unique index and avoids a redundant publish).
+  const dup = await db
+    .select({ id: schema.files.id })
+    .from(schema.files)
+    .where(
+      and(
+        eq(schema.files.orgId, orgId),
+        eq(schema.files.checksumSha256, checksum),
+        isNull(schema.files.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (dup.length > 0) return { created: false, fileId: dup[0].id };
+
+  const fileId = uuidv7();
+  const slug = await uniqueSlug(db, deriveSlug(result.formattedName));
+  const privateKey = `files/${orgId}/${fileId}/${slug}.vcf`;
+
+  await r2Put(cfg, env.R2_PRIVATE_BUCKET, privateKey, result.normalized);
+  await r2Put(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(slug), result.normalized, {
+    "Content-Type": "text/vcard; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${slug}.vcf"`,
+    "Cache-Control": "public, max-age=300, s-maxage=300",
+  });
+
+  const parsed = parseVcard(result.normalized);
+  await scoped.files.create({
+    id: fileId,
+    uploadedBy: opts.uploadedBy,
+    originalName: `${slug}.vcf`,
+    contentType: "text/vcard; charset=utf-8",
+    sizeBytes: normalizedSize,
+    checksumSha256: checksum,
+    storageKey: privateKey,
+    bucket: "private",
+    visibility: "public",
+    kind: "vcard",
+    status: "ready",
+    publicSlug: slug,
+    publishedAt: new Date(),
+    contactName: parsed.fullName || null,
+    contactOrg: parsed.organization || null,
+    contactTitle: parsed.title || null,
+    contactEmail: parsed.email || null,
+    contactLocation:
+      buildLocationText(parsed.address.city, parsed.address.state) || null,
+    category: "vcard",
+    source: opts.source,
+    o365UserId: opts.o365UserId ?? null,
+  });
+  await addUsage(db, orgId, normalizedSize);
+  await scoped.audit.append({
+    actorUserId: null,
+    action: "card.auto_created",
+    targetType: "file",
+    targetId: fileId,
+    metadataJson: JSON.stringify({
+      slug,
+      url: publicUrlFor(env, slug),
+      source: opts.source,
+    }),
+  });
+
+  return { created: true, fileId, publicUrl: publicUrlFor(env, slug) };
+}
+
+/**
+ * System unpublish for offboarding (spec 0016) — no actor / manage check, since it
+ * is a scheduled job, not a user action. Removes the public object and marks the
+ * card private; the slug is retired, not recycled. Idempotent. The caller then runs
+ * the O365 sync to clear the user's CustomAttribute1.
+ */
+export async function autoUnpublishVcard(
+  env: UploadEnv,
+  orgId: string,
+  fileId: string,
+): Promise<void> {
+  const cfg = r2Config(env);
+  const db = buildDb(env.DB);
+  const scoped = orgDb(orgId, db);
+
+  const file = await scoped.files.get(fileId);
+  if (!file || file.deletedAt) return;
+  if (file.visibility !== "public" || !file.publicSlug) return; // already private
+
+  await r2Delete(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(file.publicSlug));
+  await scoped.files.update(fileId, { visibility: "private", publishedAt: null });
+  await scoped.audit.append({
+    actorUserId: null,
+    action: "card.auto_unpublished",
+    targetType: "file",
+    targetId: fileId,
+    metadataJson: JSON.stringify({ slug: file.publicSlug }),
+  });
 }

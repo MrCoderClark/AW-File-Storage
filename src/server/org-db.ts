@@ -165,13 +165,25 @@ export function orgDb(orgId: string, db: Db = getDb()) {
   // upsert the single row for this org. Constrained to `orgId` like every other
   // helper here, so one org can never read or change another's settings.
   const settings = {
-    async get(): Promise<{ o365SyncEnabled: boolean }> {
+    async get(): Promise<{
+      o365SyncEnabled: boolean;
+      o365AutoCardEnabled: boolean;
+      o365AutoCardSince: Date | null;
+    }> {
       const rows = await db
-        .select({ o365SyncEnabled: orgSettings.o365SyncEnabled })
+        .select({
+          o365SyncEnabled: orgSettings.o365SyncEnabled,
+          o365AutoCardEnabled: orgSettings.o365AutoCardEnabled,
+          o365AutoCardSince: orgSettings.o365AutoCardSince,
+        })
         .from(orgSettings)
         .where(eq(orgSettings.orgId, orgId))
         .limit(1);
-      return { o365SyncEnabled: rows[0]?.o365SyncEnabled ?? false };
+      return {
+        o365SyncEnabled: rows[0]?.o365SyncEnabled ?? false,
+        o365AutoCardEnabled: rows[0]?.o365AutoCardEnabled ?? false,
+        o365AutoCardSince: rows[0]?.o365AutoCardSince ?? null,
+      };
     },
     async setO365SyncEnabled(value: boolean) {
       await db
@@ -180,6 +192,26 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         .onConflictDoUpdate({
           target: orgSettings.orgId,
           set: { o365SyncEnabled: value, updatedAt: new Date() },
+        });
+    },
+    async setO365AutoCardEnabled(value: boolean) {
+      const now = new Date();
+      // Stamp the cutoff each time the feature is turned ON, so only users created
+      // after this moment are provisioned (existing staff are never backfilled).
+      // Turning it off leaves the previous cutoff untouched.
+      await db
+        .insert(orgSettings)
+        .values({
+          orgId,
+          o365AutoCardEnabled: value,
+          o365AutoCardSince: value ? now : null,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: orgSettings.orgId,
+          set: value
+            ? { o365AutoCardEnabled: true, o365AutoCardSince: now, updatedAt: now }
+            : { o365AutoCardEnabled: false, updatedAt: now },
         });
     },
   };

@@ -34,6 +34,7 @@ const ALLOWLIST = new Set<string>([
   // org-scoped — routing them through orgDb would be wrong.
   "/src/server/cleanup.ts", // nightly abandoned-upload sweep across all orgs
   "/src/server/o365-sync.ts", // nightly O365 reconcile across all orgs (uses orgDb for audit/settings)
+  "/src/server/o365-provision.ts", // spec 0016: auto-provision cards from the O365 directory across all opted-in orgs (each write confined to the swept org)
   // Run with no active org in scope.
   "/src/app/api/admin/bootstrap/route.ts", // first-user bootstrap
   "/src/app/api/dev/seed/route.ts", // local dev seed
@@ -54,13 +55,6 @@ const ALLOWLIST = new Set<string>([
   // Gated by isPlatformOwner at the route; not org-scopable.
   "/src/server/domains.ts",
   "/src/server/provisioning.ts",
-  // SCIM server (spec 0015): a presented bearer token resolves to its org (a
-  // cross-org lookup), then all writes are confined to that org. Token-authenticated
-  // (machine-to-machine), not session-scopable via the wrapper.
-  "/src/server/scim.ts",
-  // Scheduled-email flush (spec 0015): a system job over the pending_email queue,
-  // keyed by user, not org-scoped. Run by cron with the bearer secret.
-  "/src/server/pending-email.ts",
 ]);
 
 function importsRawDb(path: string, src: string): boolean {

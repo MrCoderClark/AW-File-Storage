@@ -15,12 +15,6 @@ import { type NextRequest, NextResponse } from "next/server";
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export function proxy(req: NextRequest) {
-  // SCIM (spec 0015) is machine-to-machine BEARER auth, not cookies, so CSRF does
-  // not apply — and the client (Entra) cannot send a matching Origin. Exempt it
-  // from the Origin check; every SCIM route independently authenticates the bearer
-  // token. (Unlike the cron worker, which sends `Origin: <APP_URL>` to pass this.)
-  if (req.nextUrl.pathname.startsWith("/api/scim/")) return NextResponse.next();
-
   if (!MUTATING.has(req.method)) return NextResponse.next();
 
   const origin = req.headers.get("origin");
