@@ -39,6 +39,27 @@ export const dynamic = "force-dynamic";
 
 const NOINDEX = "noindex, nofollow";
 const NO_CACHE = "private, no-store";
+const NOSNIFF = "nosniff";
+
+// The landing page ships ZERO JavaScript and only loads same-host images + inline
+// styles, so it enforces a strict, script-free CSP (spec 0020) — a hard second
+// backstop against any stored-XSS attempt in a card's own contact data. next.config
+// sets no *enforced* Content-Security-Policy, so this handler-set one is authoritative.
+//
+// Images come from the app host ('self': the QR endpoint, social icons, built-in
+// logos) or from the public file domain (an org's uploaded state logo is stored
+// there — a cross-host reference when the page is previewed on the app host), so both
+// are allowed for `img-src`. Everything else stays denied; there is no `script-src`.
+function landingCsp(publicDomain: string): string {
+  return [
+    "default-src 'none'",
+    `img-src 'self' https://${publicDomain} data:`,
+    "style-src 'unsafe-inline'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'none'",
+  ].join("; ");
+}
 
 /**
  * Logo bytes for the PDF header, resolved the same way the landing page resolves
@@ -125,7 +146,11 @@ export async function GET(
     // Unknown or unpublished slug: 404, no count (AC-6).
     return new Response("Not found", {
       status: 404,
-      headers: { "X-Robots-Tag": NOINDEX, "Cache-Control": NO_CACHE },
+      headers: {
+        "X-Robots-Tag": NOINDEX,
+        "Cache-Control": NO_CACHE,
+        "X-Content-Type-Options": NOSNIFF,
+      },
     });
   }
 
@@ -139,7 +164,11 @@ export async function GET(
     // Row says published but the object is gone: treat as not found, no count.
     return new Response("Not found", {
       status: 404,
-      headers: { "X-Robots-Tag": NOINDEX, "Cache-Control": NO_CACHE },
+      headers: {
+        "X-Robots-Tag": NOINDEX,
+        "Cache-Control": NO_CACHE,
+        "X-Content-Type-Options": NOSNIFF,
+      },
     });
   }
 
@@ -162,6 +191,7 @@ export async function GET(
         "Content-Disposition": `attachment; filename="${slug}.vcf"`,
         "Cache-Control": NO_CACHE,
         "X-Robots-Tag": NOINDEX,
+        "X-Content-Type-Options": NOSNIFF,
       },
     });
   }
@@ -194,6 +224,7 @@ export async function GET(
         "Content-Disposition": `attachment; filename="${slug}.pdf"`,
         "Cache-Control": NO_CACHE,
         "X-Robots-Tag": NOINDEX,
+        "X-Content-Type-Options": NOSNIFF,
       },
     });
   }
@@ -229,6 +260,8 @@ export async function GET(
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": NO_CACHE,
       "X-Robots-Tag": NOINDEX,
+      "X-Content-Type-Options": NOSNIFF,
+      "Content-Security-Policy": landingCsp(publicDomain),
     },
   });
 }
