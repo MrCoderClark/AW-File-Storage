@@ -79,6 +79,11 @@ export const files = sqliteTable(
     // Persisted coarse type (FileCategory in lib/file-type.ts), so the Files
     // "Filter by type" control is an indexable WHERE rather than a client guess.
     category: text("category"),
+    // Provenance (spec 0016): 'manual' for every human-created/uploaded file (the
+    // default, and what all existing rows are); 'o365_auto' marks a card that was
+    // auto-provisioned from the Office 365 directory, so offboarding and the
+    // non-clobber rule can tell auto cards from human-authored ones.
+    source: text("source").notNull().default("manual"),
     // Office 365 sync state (spec 0010): the card's public URL is written into the
     // matched staff member's Exchange CustomAttribute1 via Microsoft Graph. All
     // null until a sync runs; only meaningful for published vCards.
@@ -297,6 +302,17 @@ export const orgSettings = sqliteTable("org_settings", {
   o365SyncEnabled: integer("o365_sync_enabled", { mode: "boolean" })
     .notNull()
     .default(false),
+  // Auto-create + publish a contact card from each licensed O365 user's directory
+  // details, and keep it in sync (spec 0016). Off by default; also needs
+  // o365SyncEnabled on + the org's own credentials. Opt-in because it publishes staff
+  // PII to public URLs.
+  o365AutoCardEnabled: integer("o365_auto_card_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  // The cutoff for auto-provisioning (spec 0016): only O365 users CREATED at/after
+  // this instant get a card, so enabling the feature never backfills existing staff.
+  // Set to "now" each time the toggle is turned on.
+  o365AutoCardSince: integer("o365_auto_card_since", { mode: "timestamp_ms" }),
   updatedAt: updatedAt(),
 });
 

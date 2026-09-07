@@ -255,6 +255,104 @@ export async function findUsersByEmail(
   return [...found.values()];
 }
 
+/**
+ * One directory user with the fields a contact card needs (spec 0016). `licensed`
+ * is derived from having any assigned license; `currentAttr` is the live
+ * extensionAttribute1 for idempotent diffing.
+ */
+export interface GraphDirectoryUser {
+  id: string;
+  accountEnabled: boolean;
+  mail: string | null;
+  userPrincipalName: string | null;
+  displayName: string | null;
+  givenName: string | null;
+  surname: string | null;
+  jobTitle: string | null;
+  mobilePhone: string | null;
+  businessPhones: string[];
+  streetAddress: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  country: string | null;
+  companyName: string | null;
+  department: string | null;
+  licensed: boolean;
+  /** Account creation time, for the "only new users" cutoff (spec 0016). */
+  createdDateTime: Date | null;
+  currentAttr: string | null;
+}
+
+const DIRECTORY_SELECT = [
+  "id", "accountEnabled", "mail", "userPrincipalName", "displayName",
+  "givenName", "surname", "jobTitle", "mobilePhone", "businessPhones",
+  "streetAddress", "city", "state", "postalCode", "country", "companyName",
+  "department", "assignedLicenses", "createdDateTime",
+  "onPremisesExtensionAttributes",
+].join(",");
+
+function mapDirectoryUser(u: Record<string, unknown>): GraphDirectoryUser {
+  const str = (v: unknown): string | null =>
+    typeof v === "string" && v.trim() ? v : null;
+  const ext = u.onPremisesExtensionAttributes as
+    | { extensionAttribute1?: string | null }
+    | undefined;
+  const licenses = Array.isArray(u.assignedLicenses) ? u.assignedLicenses : [];
+  return {
+    id: String(u.id),
+    accountEnabled: u.accountEnabled !== false, // absent → treat as enabled
+    mail: str(u.mail),
+    userPrincipalName: str(u.userPrincipalName),
+    displayName: str(u.displayName),
+    givenName: str(u.givenName),
+    surname: str(u.surname),
+    jobTitle: str(u.jobTitle),
+    mobilePhone: str(u.mobilePhone),
+    businessPhones: Array.isArray(u.businessPhones)
+      ? (u.businessPhones.filter((p) => typeof p === "string") as string[])
+      : [],
+    streetAddress: str(u.streetAddress),
+    city: str(u.city),
+    state: str(u.state),
+    postalCode: str(u.postalCode),
+    country: str(u.country),
+    companyName: str(u.companyName),
+    department: str(u.department),
+    licensed: licenses.length > 0,
+    createdDateTime:
+      typeof u.createdDateTime === "string"
+        ? new Date(u.createdDateTime)
+        : null,
+    currentAttr: ext?.extensionAttribute1 ?? null,
+  };
+}
+
+/**
+ * Every user in the tenant with the card-relevant fields (spec 0016), following
+ * `@odata.nextLink` paging. The caller filters to enabled + licensed + mailboxed.
+ * Throws on a Graph error so the sweep records it.
+ */
+export async function listDirectoryUsers(
+  c: GraphCreds,
+): Promise<GraphDirectoryUser[]> {
+  const out: GraphDirectoryUser[] = [];
+  let path: string | null = `/users?$select=${DIRECTORY_SELECT}&$top=100`;
+  let guard = 0;
+  while (path && guard++ < 500) {
+    const res = await graphFetch(c, path);
+    if (!res.ok) throw new Error(`Graph users list failed: ${res.status}`);
+    const data = (await res.json()) as {
+      value?: Array<Record<string, unknown>>;
+      "@odata.nextLink"?: string;
+    };
+    for (const u of data.value ?? []) out.push(mapDirectoryUser(u));
+    const next = data["@odata.nextLink"];
+    path = next ? next.replace(GRAPH_BASE, "") : null;
+  }
+  return out;
+}
+
 /** Read one user's current extensionAttribute1 (for the reconcile diff). */
 export async function getUserExtensionAttribute1(
   c: GraphCreds,

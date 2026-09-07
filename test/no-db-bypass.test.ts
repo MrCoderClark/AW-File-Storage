@@ -34,6 +34,7 @@ const ALLOWLIST = new Set<string>([
   // org-scoped — routing them through orgDb would be wrong.
   "/src/server/cleanup.ts", // nightly abandoned-upload sweep across all orgs
   "/src/server/o365-sync.ts", // nightly O365 reconcile across all orgs (uses orgDb for audit/settings)
+  "/src/server/o365-provision.ts", // spec 0016: auto-provision cards from the O365 directory across all opted-in orgs (each write confined to the swept org)
   // Run with no active org in scope.
   "/src/app/api/admin/bootstrap/route.ts", // first-user bootstrap
   "/src/app/api/dev/seed/route.ts", // local dev seed

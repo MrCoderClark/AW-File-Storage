@@ -12,11 +12,12 @@ appears in an org's tenant, the app **builds a contact vCard from that user's
 directory details, publishes it, and writes the public URL into their
 CustomAttribute1 — automatically**, with no card authoring and, deliberately, **no
 web-app login/account** created for them (this is not SCIM; a card is a file, not a
-user). It is a **per-org, opt-in** extension of the O365 sync each org already
-configures with its own Entra app. A new user's card appears **within minutes** of
-their account existing, via a frequent directory poll that waits for the mailbox to
-be ready; a nightly reconcile and the existing "Sync all now" button are the safety
-nets. When a user is disabled or unlicensed, their auto-created card is unpublished
+user). It is **forward-only**: only users **created after the feature is enabled** get
+a card — enabling it **never backfills** the org's existing staff. It is a **per-org,
+opt-in** extension of the O365 sync each org already configures with its own Entra app.
+A new user's card appears **within minutes** of their account existing, via a frequent
+directory poll that waits for the mailbox to be ready; a nightly reconcile and the
+existing "Sync all now" button are the safety nets. When a user is disabled or unlicensed, their auto-created card is unpublished
 and the attribute cleared.
 
 ## Context
@@ -77,6 +78,12 @@ Graph integration instead of SCIM.
   attribute. A brand-new user whose mailbox has not provisioned yet (`mail` empty) is
   **skipped and retried** on a later run; this *is* the "wait ~5 minutes for the
   mailbox" behavior, detected rather than timed.
+- **AC-2b (forward-only — no backfill)**: Enabling the toggle records a **cutoff**
+  (`org_settings.o365AutoCardSince`, set to "now" on each enable). Only users whose
+  Graph `createdDateTime` is **at/after the cutoff** are provisioned; **existing users
+  created before the cutoff are never given a card**. "Sync all now" and the nightly
+  sweep obey the same cutoff (they catch missed *new* users, not old ones). Absent a
+  cutoff, nothing is created (fail-safe toward not backfilling).
 - **AC-3 (org resolution)**: Each user's card belongs to the org resolved from the
   user's email **domain** via `org_domains` (spec 0014). A user whose domain does not
   map to the org being swept is skipped and logged (never cross-filed).
@@ -90,10 +97,14 @@ Graph integration instead of SCIM.
   published vCard already exists for that email** in the org. A person who already has
   a card (manual or previously auto-created) is never duplicated, and a **human-edited
   card is never overwritten**. A second run over the same directory is a no-op.
-- **AC-6 (cadence)**: The same per-org sweep runs at three cadences: a **frequent poll
-  (~every 10 min)** for near-real-time creation, the **nightly reconcile**, and the
-  existing **"Sync all now"** action (on demand). All three only act on orgs with the
-  toggle on + credentials.
+- **AC-6 (cadence)**: The per-org sweep runs on a **once-a-day, weekday schedule**
+  (`0 13 * * 1-5`, ~9am ET) as a catch-up safety net, plus the on-demand **"Check for
+  new users now"** action for same-day hires (the poll interval is a deployment
+  choice, tuned down from every-minute for cost). Both only act on orgs with the toggle
+  on + credentials. The on-demand action is **separate** from "Sync existing cards"
+  (the spec-0010 reconcile of already-published cards): two buttons, each next to its
+  own toggle — one re-asserts existing cards' attributes, the other provisions new
+  users.
 - **AC-7 (offboarding)**: When an auto-provisioned user becomes **disabled**
   (`accountEnabled: false`), **unlicensed**, or loses their mailbox, their
   **auto-created** card is **unpublished** and CustomAttribute1 **cleared**.
@@ -133,14 +144,14 @@ or a fixed timer).
 
 | Table | Change | Notes |
 |---|---|---|
-| `org_settings` | `+ o365_auto_card_enabled` boolean, default `false` | The per-org opt-in (AC-1). Read via `orgDb(orgId).settings.get()`. |
+| `org_settings` | `+ o365_auto_card_enabled` boolean, default `false`; `+ o365_auto_card_since` timestamp (nullable) | The per-org opt-in (AC-1) and the forward-only cutoff (AC-2b), stamped "now" on each enable. Read via `orgDb(orgId).settings.get()`. |
 | `file` | `+ source` text, default `'manual'` | `'o365_auto'` marks an auto-provisioned card (AC-8); everything existing is `'manual'`. Used by the non-clobber rule and offboarding. The Graph user id is stored in the existing `o365UserId` column at creation. |
 
 **Graph additions** (`src/server/graph.ts`): `listDirectoryUsers(creds)` — page through
 `GET /users` (`@odata.nextLink`) selecting `id, accountEnabled, mail,
 userPrincipalName, displayName, givenName, surname, jobTitle, mobilePhone,
 businessPhones, streetAddress, city, state, postalCode, country, companyName,
-department, assignedLicenses, onPremisesExtensionAttributes`. Returns a typed
+department, assignedLicenses, createdDateTime, onPremisesExtensionAttributes`. Returns a typed
 `GraphDirectoryUser[]`. Reuses `graphFetch` (auth + 429 backoff). Enumerating the
 directory uses `User.Read.All`, already covered by the app's `User.ReadWrite.All`.
 
@@ -149,9 +160,10 @@ allowlist — a cross-org system job like `o365-sync.ts`):
 - `provisionCardsForOrg(env, orgId)` — no-op unless the org has creds
   (`loadGraphCreds`) **and** both toggles on. Then:
   1. `listDirectoryUsers(creds)`.
-  2. **Create pass** — for each user that is enabled + licensed + has `mail`, whose
-     domain resolves (via `org_domains`) to `orgId`, and who has **no live published
-     vCard for that email**: map Graph fields → `CardFields`, `buildVcard`,
+  2. **Create pass** — for each user that is enabled + licensed + has `mail`, **whose
+     `createdDateTime` is at/after the org's cutoff** (AC-2b), whose domain resolves
+     (via `org_domains`) to `orgId`, and who has **no live published vCard for that
+     email**: map Graph fields → `CardFields`, `buildVcard`,
      `publishVcardServerSide(...)` with `source: 'o365_auto'`, `o365UserId: user.id`,
      then `syncCardToO365` to write CustomAttribute1. Audited `card.auto_created`.
   3. **Offboard pass** — for each live card in the org with `source = 'o365_auto'`
@@ -166,14 +178,18 @@ allowlist — a cross-org system job like `o365-sync.ts`):
   — the bytes are built in the Worker).
 
 **Triggers / cadence** (`cron/` + a new route):
-- **Frequent poll**: add a `*/10 * * * *` trigger to the companion cron worker; it
-  branches on `event.cron` and calls a new bearer-authed `POST /api/cron/o365-provision`
-  → loops orgs with `o365AutoCardEnabled` on → `provisionCardsForOrg`. (The nightly
-  `0 3 * * *` trigger is unchanged.)
-- **Nightly**: the nightly run also invokes `provisionCardsForOrg` for enabled orgs
-  (alongside the existing `reconcileO365`).
-- **On demand**: the existing **"Sync all now"** (Settings → Office 365) also runs the
-  provisioning sweep for the org when the toggle is on.
+- **Scheduled poll**: a `0 13 * * 1-5` (weekdays ~9am ET) trigger on the companion cron
+  worker; it branches on `event.cron` and calls a bearer-authed
+  `POST /api/cron/o365-provision` → loops orgs with `o365AutoCardEnabled` on →
+  `provisionCardsForOrg`. Once a day is enough because account creation is rare and the
+  in-app button covers same-day hires; a full directory enumeration per run is cheap at
+  this cadence (a `createdDateTime`-filtered delta query would let it run more often if
+  ever wanted). The nightly `0 3 * * *` trigger keeps doing cleanup + the spec-0010
+  reconcile (it does **not** provision).
+- **On demand**: **two separate buttons** in Settings → Office 365 — **"Sync existing
+  cards"** (`.../o365/sync` → `reconcileO365`, next to the sync toggle) and **"Check for
+  new users now"** (`.../o365/provision` → `provisionCardsForOrg` for the acting org,
+  next to the auto-card toggle).
 
 **UI** (`src/components/o365-settings-section.tsx`): a second toggle under the existing
 sync toggle — **"Auto-create contact cards from Office 365 users"** — owner/admin,

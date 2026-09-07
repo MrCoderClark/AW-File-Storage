@@ -5,7 +5,10 @@
 	"compatibility_date": "2026-08-01",
 	"observability": { "enabled": true },
 	// Nightly at 03:00 UTC (spec 0003 AC-14): abandoned-upload sweep + O365 reconcile.
-	"triggers": { "crons": ["0 3 * * *"] },
+	// Weekdays at 13:00 UTC (~9am ET): O365 directory provision (spec 0016) — a
+	// once-a-day safety net; the "Check for new users now" button handles same-day
+	// hires. The worker branches on `event.cron`.
+	"triggers": { "crons": ["0 3 * * *", "0 13 * * 1-5"] },
 	// APP_URL is the deployed app origin; it is BOTH the request target and the
 	// Origin header sent to satisfy the app's CSRF guard. Set CRON_SECRET with
 	// `wrangler secret put CRON_SECRET` from this dir (must match the app's).
