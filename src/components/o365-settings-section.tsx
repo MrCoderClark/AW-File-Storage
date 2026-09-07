@@ -16,6 +16,7 @@ interface Summary {
 interface State {
   enabled: boolean;
   autoCardEnabled: boolean;
+  removeOnOffboardEnabled: boolean;
   configured: boolean;
   summary: Summary;
 }
@@ -25,8 +26,10 @@ export function O365SettingsSection() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
+  const [offboarding, setOffboarding] = useState(false);
   const [msg, setMsg] = useState("");
   const [provisionMsg, setProvisionMsg] = useState("");
+  const [offboardMsg, setOffboardMsg] = useState("");
   const [error, setError] = useState("");
 
   async function load() {
@@ -83,6 +86,47 @@ export function O365SettingsSection() {
       setError("Could not save. Try again.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function toggleRemoveOnOffboard(next: boolean) {
+    if (!state) return;
+    setSaving(true);
+    setError("");
+    const prev = state.removeOnOffboardEnabled;
+    setState({ ...state, removeOnOffboardEnabled: next });
+    try {
+      const res = await fetch("/api/settings/o365", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ removeOnOffboardEnabled: next }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      setState({ ...state, removeOnOffboardEnabled: prev });
+      setError("Could not save. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Run the sweep to retract cards for offboarded users on demand (spec 0017). Same
+  // endpoint as provisioning — provisionCardsForOrg runs both passes — but reports the
+  // offboard (retracted) count here.
+  async function offboardNow() {
+    setOffboarding(true);
+    setError("");
+    setOffboardMsg("");
+    try {
+      const res = await fetch("/api/settings/o365/provision", { method: "POST" });
+      const body = (await res.json()) as { unpublished?: number };
+      if (!res.ok) throw new Error(String(res.status));
+      setOffboardMsg(`Retracted ${body.unpublished ?? 0} card(s).`);
+      await load();
+    } catch {
+      setError("Could not check for offboarded users. Try again.");
+    } finally {
+      setOffboarding(false);
     }
   }
 
@@ -247,6 +291,56 @@ export function O365SettingsSection() {
           </button>
           {provisionMsg && (
             <span className="text-xs text-muted-500">{provisionMsg}</span>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-[--radius-panel] border border-border bg-surface p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-800">
+              Remove cards when an Office 365 user is offboarded
+            </p>
+            <p className="mt-1 text-sm text-muted-500">
+              When on, if a user is <strong>disabled and unlicensed</strong> in your
+              tenant (e.g. their mailbox is converted to shared and their license
+              removed), their published contact card is unpublished and their
+              CustomAttribute1 cleared, then permanently deleted after 30 days. This
+              includes manually-created cards, but only for people on your own Office
+              365 domain.
+            </p>
+          </div>
+          <Switch
+            checked={state?.removeOnOffboardEnabled === true}
+            disabled={
+              state === null ||
+              saving ||
+              state?.configured === false ||
+              state?.enabled === false
+            }
+            onChange={toggleRemoveOnOffboard}
+            label="Remove cards when an Office 365 user is offboarded"
+          />
+        </div>
+        {state?.removeOnOffboardEnabled && (
+          <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            Departed users&apos; cards are retracted immediately and{" "}
+            <strong>permanently deleted after 30 days</strong>. Re-publish a card
+            within that window to keep it.
+          </p>
+        )}
+
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void offboardNow()}
+            disabled={offboarding || state?.removeOnOffboardEnabled !== true}
+            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-canvas disabled:opacity-50"
+          >
+            {offboarding ? "Checking…" : "Check for offboarded users now"}
+          </button>
+          {offboardMsg && (
+            <span className="text-xs text-muted-500">{offboardMsg}</span>
           )}
         </div>
       </div>

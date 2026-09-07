@@ -42,6 +42,7 @@ import {
 } from "../src/server/o365-provision";
 import { orgDb } from "../src/server/org-db";
 import { encryptSecret } from "../src/server/secret-box";
+import { purgeOffboardedCards } from "../src/server/uploads";
 
 const db = buildDb(env.DB);
 const KEK = btoa("0123456789abcdef0123456789abcdef");
@@ -127,6 +128,7 @@ async function insertCard(over: {
   o365UserId?: string | null;
   o365SyncedUrl?: string | null;
   visibility?: "private" | "public";
+  offboardedAt?: Date | null;
 }) {
   const now = new Date();
   await db.insert(files).values({
@@ -147,10 +149,14 @@ async function insertCard(over: {
     source: over.source ?? "manual",
     o365UserId: over.o365UserId ?? null,
     o365SyncedUrl: over.o365SyncedUrl ?? null,
+    offboardedAt: over.offboardedAt ?? null,
     createdAt: now,
     updatedAt: now,
   });
 }
+
+const enableOffboard = () =>
+  orgDb("org-a", db).settings.setO365RemoveOnOffboardEnabled(true);
 
 beforeEach(async () => {
   listUsers.mockReset();
@@ -259,32 +265,80 @@ describe("provisionCardsForOrg — create pass (spec 0016)", () => {
   });
 });
 
-describe("provisionCardsForOrg — offboard pass (spec 0016)", () => {
-  it("unpublishes an auto card whose user is disabled, and clears the attribute", async () => {
+describe("provisionCardsForOrg — offboard pass (spec 0017)", () => {
+  // A disabled + unlicensed user still present in the directory.
+  const offboarded = (over = {}) =>
+    dirUser({ accountEnabled: false, licensed: false, ...over });
+
+  it("retracts a MANUAL card for a disabled+unlicensed user on the O365 domain", async () => {
+    await enableOffboard();
+    // A manual card that the spec-0010 reconcile previously synced (so it has the
+    // matched user id + a written URL — that's why CustomAttribute1 can be cleared).
     await insertCard({
-      id: "auto1", email: "gone@aw.com", source: "o365_auto", o365UserId: "u9",
-      o365SyncedUrl: "https://contacts.awvcard.com/c/auto1.vcf", // previously synced
+      id: "manual1", email: "gone@aw.com", source: "manual",
+      o365UserId: "u9",
+      o365SyncedUrl: "https://contacts.awvcard.com/c/manual1.vcf",
     });
-    // The directory no longer has an active u9 (disabled).
-    listUsers.mockResolvedValue([
-      dirUser({ id: "u9", mail: "gone@aw.com", accountEnabled: false }),
-    ]);
+    listUsers.mockResolvedValue([offboarded({ id: "u9", mail: "gone@aw.com" })]);
     const s = await provisionCardsForOrg(BASE_ENV, "org-a");
     expect(s.unpublished).toBe(1);
-
-    const [card] = await db.select().from(files).where(eq(files.id, "auto1"));
+    const [card] = await db.select().from(files).where(eq(files.id, "manual1"));
     expect(card.visibility).toBe("private");
-    expect(patchAttr).toHaveBeenCalledWith(expect.anything(), "u9", null);
+    expect(card.offboardedAt).toBeTruthy();
+    expect(patchAttr).toHaveBeenCalledWith(expect.anything(), "u9", null); // cleared
   });
 
-  it("leaves a MANUAL card published even when its user is gone", async () => {
-    await insertCard({
-      id: "manual2", email: "gone@aw.com", source: "manual", o365UserId: "u9",
-    });
-    listUsers.mockResolvedValue([]); // u9 absent from the directory
+  it("does nothing when the remove-on-offboard toggle is off", async () => {
+    // (auto-card is on from beforeEach, but the offboard toggle is not)
+    await insertCard({ id: "manual1", email: "gone@aw.com", source: "manual" });
+    listUsers.mockResolvedValue([offboarded({ id: "u9", mail: "gone@aw.com" })]);
     const s = await provisionCardsForOrg(BASE_ENV, "org-a");
     expect(s.unpublished).toBe(0);
-    const [card] = await db.select().from(files).where(eq(files.id, "manual2"));
+    const [card] = await db.select().from(files).where(eq(files.id, "manual1"));
     expect(card.visibility).toBe("public");
+  });
+
+  it("leaves a disabled-but-LICENSED user's card alone (not fully offboarded)", async () => {
+    await enableOffboard();
+    await insertCard({ id: "manual1", email: "gone@aw.com", source: "manual" });
+    listUsers.mockResolvedValue([
+      dirUser({ id: "u9", mail: "gone@aw.com", accountEnabled: false, licensed: true }),
+    ]);
+    const s = await provisionCardsForOrg(BASE_ENV, "org-a");
+    expect(s.unpublished).toBe(0);
+    expect((await db.select().from(files).where(eq(files.id, "manual1")))[0].visibility).toBe("public");
+  });
+
+  it("never treats an ABSENT user as offboarded (positive signal only)", async () => {
+    await enableOffboard();
+    await insertCard({ id: "manual1", email: "gone@aw.com", source: "manual" });
+    listUsers.mockResolvedValue([]); // the user is missing from the listing
+    const s = await provisionCardsForOrg(BASE_ENV, "org-a");
+    expect(s.unpublished).toBe(0);
+    expect((await db.select().from(files).where(eq(files.id, "manual1")))[0].visibility).toBe("public");
+  });
+
+  it("never touches a card on a non-O365 domain", async () => {
+    await enableOffboard();
+    await insertCard({ id: "ext1", email: "gone@other.com", source: "manual" });
+    listUsers.mockResolvedValue([offboarded({ id: "u9", mail: "gone@other.com" })]);
+    const s = await provisionCardsForOrg(BASE_ENV, "org-a");
+    expect(s.unpublished).toBe(0);
+    expect((await db.select().from(files).where(eq(files.id, "ext1")))[0].visibility).toBe("public");
+  });
+});
+
+describe("purgeOffboardedCards — 30-day delete (spec 0017)", () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+
+  it("deletes cards past 30 days, spares recent and re-published ones", async () => {
+    await insertCard({ id: "old", email: "a@aw.com", visibility: "private", offboardedAt: daysAgo(31) });
+    await insertCard({ id: "recent", email: "b@aw.com", visibility: "private", offboardedAt: daysAgo(10) });
+    await insertCard({ id: "republished", email: "c@aw.com", visibility: "public", offboardedAt: daysAgo(31) });
+    const { deleted } = await purgeOffboardedCards(BASE_ENV);
+    expect(deleted).toBe(1);
+    expect((await db.select().from(files).where(eq(files.id, "old")))[0].deletedAt).toBeTruthy();
+    expect((await db.select().from(files).where(eq(files.id, "recent")))[0].deletedAt).toBeNull();
+    expect((await db.select().from(files).where(eq(files.id, "republished")))[0].deletedAt).toBeNull();
   });
 });
