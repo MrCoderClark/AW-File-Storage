@@ -169,12 +169,14 @@ export function orgDb(orgId: string, db: Db = getDb()) {
       o365SyncEnabled: boolean;
       o365AutoCardEnabled: boolean;
       o365AutoCardSince: Date | null;
+      o365RemoveOnOffboardEnabled: boolean;
     }> {
       const rows = await db
         .select({
           o365SyncEnabled: orgSettings.o365SyncEnabled,
           o365AutoCardEnabled: orgSettings.o365AutoCardEnabled,
           o365AutoCardSince: orgSettings.o365AutoCardSince,
+          o365RemoveOnOffboardEnabled: orgSettings.o365RemoveOnOffboardEnabled,
         })
         .from(orgSettings)
         .where(eq(orgSettings.orgId, orgId))
@@ -183,6 +185,8 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         o365SyncEnabled: rows[0]?.o365SyncEnabled ?? false,
         o365AutoCardEnabled: rows[0]?.o365AutoCardEnabled ?? false,
         o365AutoCardSince: rows[0]?.o365AutoCardSince ?? null,
+        o365RemoveOnOffboardEnabled:
+          rows[0]?.o365RemoveOnOffboardEnabled ?? false,
       };
     },
     async setO365SyncEnabled(value: boolean) {
@@ -212,6 +216,16 @@ export function orgDb(orgId: string, db: Db = getDb()) {
           set: value
             ? { o365AutoCardEnabled: true, o365AutoCardSince: now, updatedAt: now }
             : { o365AutoCardEnabled: false, updatedAt: now },
+        });
+    },
+    async setO365RemoveOnOffboardEnabled(value: boolean) {
+      const now = new Date();
+      await db
+        .insert(orgSettings)
+        .values({ orgId, o365RemoveOnOffboardEnabled: value, updatedAt: now })
+        .onConflictDoUpdate({
+          target: orgSettings.orgId,
+          set: { o365RemoveOnOffboardEnabled: value, updatedAt: now },
         });
     },
   };

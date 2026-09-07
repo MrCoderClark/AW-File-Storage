@@ -12,7 +12,8 @@ export async function GET() {
   if (!auth.ok) return auth.response;
   const { env } = getCloudflareContext();
   const scoped = orgDbFor(auth.actor.orgId, env.DB);
-  const { o365SyncEnabled, o365AutoCardEnabled } = await scoped.settings.get();
+  const { o365SyncEnabled, o365AutoCardEnabled, o365RemoveOnOffboardEnabled } =
+    await scoped.settings.get();
   const configured = Boolean(await scoped.graphCreds.get());
   const summary = await o365Summary(
     env as unknown as O365SyncEnv,
@@ -22,6 +23,7 @@ export async function GET() {
     ok: true,
     enabled: o365SyncEnabled,
     autoCardEnabled: o365AutoCardEnabled,
+    removeOnOffboardEnabled: o365RemoveOnOffboardEnabled,
     configured,
     summary,
   });
@@ -35,13 +37,15 @@ export async function PUT(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     enabled?: boolean;
     autoCardEnabled?: boolean;
+    removeOnOffboardEnabled?: boolean;
   };
   if (
     typeof body.enabled !== "boolean" &&
-    typeof body.autoCardEnabled !== "boolean"
+    typeof body.autoCardEnabled !== "boolean" &&
+    typeof body.removeOnOffboardEnabled !== "boolean"
   ) {
     return Response.json(
-      { ok: false, error: "enabled and/or autoCardEnabled (boolean) required." },
+      { ok: false, error: "a boolean toggle field is required." },
       { status: 400 },
     );
   }
@@ -52,6 +56,11 @@ export async function PUT(req: Request) {
   }
   if (typeof body.autoCardEnabled === "boolean") {
     await scoped.settings.setO365AutoCardEnabled(body.autoCardEnabled);
+  }
+  if (typeof body.removeOnOffboardEnabled === "boolean") {
+    await scoped.settings.setO365RemoveOnOffboardEnabled(
+      body.removeOnOffboardEnabled,
+    );
   }
   return Response.json({ ok: true });
 }
