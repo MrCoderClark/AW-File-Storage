@@ -3,10 +3,19 @@ import { buildVcard, type CardFields } from "../lib/vcard-builder";
 import { buildDb, type Db } from "./db";
 import { files, member, orgDomains, orgSettings } from "./db/schema";
 import { domainOf, isConsumerDomain } from "./domains";
-import { type GraphDirectoryUser, listDirectoryUsers } from "./graph";
+import {
+  type GraphDirectoryUser,
+  graphUserExists,
+  listDeletedUsers,
+  listDirectoryUsers,
+} from "./graph";
 import { loadGraphCreds, type O365SyncEnv, syncCardToO365 } from "./o365-sync";
 import { orgDb } from "./org-db";
-import { autoUnpublishVcard, publishVcardFromBytes } from "./uploads";
+import {
+  autoDeleteCard,
+  autoUnpublishVcard,
+  publishVcardFromBytes,
+} from "./uploads";
 
 // Auto-provision contact cards from the Office 365 directory (spec 0016). For each
 // org that has opted in (o365AutoCardEnabled) and has credentials, build + publish a
@@ -21,6 +30,7 @@ export type O365ProvisionEnv = O365SyncEnv;
 export interface ProvisionSummary {
   created: number;
   unpublished: number;
+  deleted: number;
   skipped: number;
 }
 
@@ -78,7 +88,7 @@ export async function provisionCardsForOrg(
   env: O365ProvisionEnv,
   orgId: string,
 ): Promise<ProvisionSummary> {
-  const summary: ProvisionSummary = { created: 0, unpublished: 0, skipped: 0 };
+  const summary: ProvisionSummary = { created: 0, unpublished: 0, deleted: 0, skipped: 0 };
   const db = buildDb(env.DB);
 
   const s = await orgDb(orgId, db).settings.get();
@@ -172,19 +182,78 @@ export async function provisionCardsForOrg(
   // disabled AND unlicensed), matched by email and confined to this org's own O365
   // domains. A user merely absent from the listing is never treated as offboarded.
   if (s.o365RemoveOnOffboardEnabled) {
+    // Disabled + unlicensed, still present in the directory — matched by email.
     const offboardedEmails = new Set(
       users
         .filter((u) => u.mail && !u.accountEnabled && !u.licensed)
         .map((u) => (u.mail as string).toLowerCase()),
     );
+    // Hard-deleted users (spec 0019) — a positive signal from Entra's recycle bin.
+    // Matched by the card's stored Graph user id (reliable even when a deleted user's
+    // email is mangled), plus email when the deleted record still has one. Missing
+    // permission / unavailable → treated as "no deletions this run" (the disable path
+    // still works, and the 404-tolerant clear stops the recurring sync error anyway).
+    const deletedIds = new Set<string>();
+    // Whether the recycle-bin read succeeded. Needed to tell a PERMANENT delete (gone
+    // from the recycle bin too → card is deleted immediately) from a SOFT delete (still
+    // in the recycle bin, restorable → card gets the 30-day grace). If the read fails,
+    // we cannot distinguish, so we fall back to the safe retract-with-grace.
+    let recycleBinReadOk = true;
+    try {
+      for (const d of await listDeletedUsers(creds)) {
+        deletedIds.add(d.id);
+        if (d.mail) offboardedEmails.add(d.mail.toLowerCase());
+      }
+    } catch {
+      recycleBinReadOk = false; // deletedItems unavailable (e.g. missing permission)
+    }
+    // Ids of all users still in the tenant (enabled or disabled), so we can spot a
+    // card whose matched user is in NEITHER the active directory nor the recycle bin.
+    const activeUserIds = new Set(users.map((u) => u.id));
+
     for (const card of liveCards) {
       const email = card.contactEmail?.toLowerCase();
-      if (!email || !offboardedEmails.has(email)) continue;
-      if (!belongsHere(email)) continue; // only cards on the org's own O365 domain(s)
+      const byEmail = Boolean(email && offboardedEmails.has(email));
+      const byDeletedId = Boolean(
+        card.o365UserId && deletedIds.has(card.o365UserId),
+      );
+      // Permanently-deleted (purged) user: the card's matched id is in neither the
+      // active directory nor the recycle bin. Confirm with a DIRECT lookup — a 404 is
+      // a provable deletion, whereas a transient listing gap would still return the
+      // user here (so a glitch can never trigger a retraction).
+      let byPurged = false;
+      if (
+        !byEmail &&
+        !byDeletedId &&
+        card.o365UserId &&
+        !activeUserIds.has(card.o365UserId) &&
+        !deletedIds.has(card.o365UserId)
+      ) {
+        try {
+          byPurged = !(await graphUserExists(creds, card.o365UserId));
+        } catch {
+          byPurged = false; // uncertain (transient / permission) — never act on doubt
+        }
+      }
+      if (!byEmail && !byDeletedId && !byPurged) continue;
+      if (!email || !belongsHere(email)) continue; // confine to the org's own domain(s)
+      // A PERMANENT delete — confirmed gone via the direct lookup AND confirmed absent
+      // from the recycle bin (the read succeeded and didn't contain it) — is
+      // unrecoverable, so the card is DELETED now rather than kept for the 30-day
+      // grace. Everything else (disable+unlicense, soft delete, or an uncertain
+      // recycle-bin read) is retracted with the grace, since it may be reversible.
+      const permanentlyDeleted = byPurged && recycleBinReadOk;
       try {
-        await autoUnpublishVcard(env, orgId, card.id, { offboarded: true });
-        await syncCardToO365(env, card.id); // card no longer live → clears attribute
-        summary.unpublished++;
+        if (permanentlyDeleted) {
+          // The user is gone, so there is no mailbox attribute left to clear — just
+          // delete the card (removes the public object + soft-deletes the row).
+          await autoDeleteCard(env, orgId, card.id);
+          summary.deleted++;
+        } else {
+          await autoUnpublishVcard(env, orgId, card.id, { offboarded: true });
+          await syncCardToO365(env, card.id); // card no longer live → clears attribute
+          summary.unpublished++;
+        }
       } catch {
         summary.skipped++;
       }
@@ -198,7 +267,7 @@ export async function provisionCardsForOrg(
 export async function provisionCardsAllOrgs(
   env: O365ProvisionEnv,
 ): Promise<ProvisionSummary> {
-  const total: ProvisionSummary = { created: 0, unpublished: 0, skipped: 0 };
+  const total: ProvisionSummary = { created: 0, unpublished: 0, deleted: 0, skipped: 0 };
   if (!env.O365_CRED_KEK) return total;
   const db = buildDb(env.DB);
   // Orgs opted into either behavior; each is fully re-checked in provisionCardsForOrg.
@@ -215,6 +284,7 @@ export async function provisionCardsAllOrgs(
     const s = await provisionCardsForOrg(env, orgId);
     total.created += s.created;
     total.unpublished += s.unpublished;
+    total.deleted += s.deleted;
     total.skipped += s.skipped;
   }
   return total;

@@ -1132,6 +1132,48 @@ export async function autoUnpublishVcard(
   });
 }
 
+/**
+ * System hard-delete for a card whose O365 user was PERMANENTLY deleted (spec 0019) —
+ * the account is unrecoverable, so there is no point in the 30-day grace: remove the
+ * public object and soft-delete the card immediately. No actor / manage check (a
+ * scheduled job). Idempotent.
+ */
+export async function autoDeleteCard(
+  env: UploadEnv,
+  orgId: string,
+  fileId: string,
+): Promise<void> {
+  const cfg = r2Config(env);
+  const db = buildDb(env.DB);
+  const scoped = orgDb(orgId, db);
+
+  const file = await scoped.files.get(fileId);
+  if (!file || file.deletedAt) return;
+  if (file.visibility === "public" && file.publicSlug) {
+    await r2Delete(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(file.publicSlug));
+  }
+  await scoped.files.update(fileId, {
+    visibility: "private",
+    publishedAt: null,
+    deletedAt: new Date(),
+  });
+  if (file.sizeBytes > 0) {
+    await db
+      .update(schema.organization)
+      .set({
+        storageUsedBytes: sql`max(0, ${schema.organization.storageUsedBytes} - ${file.sizeBytes})`,
+      })
+      .where(eq(schema.organization.id, orgId));
+  }
+  await scoped.audit.append({
+    actorUserId: null,
+    action: "card.offboard_purged",
+    targetType: "file",
+    targetId: fileId,
+    metadataJson: JSON.stringify({ reason: "o365_permanent_delete" }),
+  });
+}
+
 const OFFBOARD_GRACE_MS = 30 * 24 * 60 * 60 * 1000; // 30-day grace (spec 0017)
 
 /**
