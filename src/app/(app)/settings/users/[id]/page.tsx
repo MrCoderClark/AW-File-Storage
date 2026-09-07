@@ -26,6 +26,9 @@ export default async function MemberDetailPage({
   if (!member) notFound();
 
   const isSelf = member.userId === actor.userId;
+  // Only an owner may act on an owner's account (spec 0021); the server enforces
+  // this, so hide the actions a non-owner caller can't perform on an owner.
+  const lockedOwnerTarget = member.role === "owner" && actor.role !== "owner";
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -100,13 +103,18 @@ export default async function MemberDetailPage({
         </Panel>
       </div>
 
-      {!isSelf && (
+      {!isSelf && !lockedOwnerTarget && (
         <MemberActions
           memberId={member.id}
           memberName={member.name}
           twoFactorRequired={member.security.twoFactorRequired}
           twoFactorEnabled={member.security.twoFactorEnabled}
         />
+      )}
+      {!isSelf && lockedOwnerTarget && (
+        <p className="mt-4 rounded-[--radius-panel] border border-border bg-surface p-4 text-sm text-muted-500">
+          Only an owner can manage another owner&apos;s account.
+        </p>
       )}
     </div>
   );

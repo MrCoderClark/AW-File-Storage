@@ -27,6 +27,7 @@ export async function POST(
       env: env as unknown as AuthEnv,
       orgId: auth.actor.orgId,
       actorUserId: auth.actor.userId,
+      actorRole: auth.actor.role,
       memberId: id,
       newPassword: body.password,
     });
