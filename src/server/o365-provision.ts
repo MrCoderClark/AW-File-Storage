@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { buildVcard, type CardFields } from "../lib/vcard-builder";
 import { buildDb, type Db } from "./db";
 import { files, member, orgDomains, orgSettings } from "./db/schema";
@@ -82,15 +82,11 @@ export async function provisionCardsForOrg(
   const db = buildDb(env.DB);
 
   const s = await orgDb(orgId, db).settings.get();
-  if (!s.o365SyncEnabled || !s.o365AutoCardEnabled) return summary;
-  // Forward-only: only users created at/after the cutoff (set when the toggle was
-  // enabled) are provisioned — existing staff are never backfilled. No cutoff means
-  // create nothing (fail safe toward not backfilling).
-  const cutoff = s.o365AutoCardSince;
+  // Needs sync on plus at least one of the two behaviors; else nothing to do.
+  if (!s.o365SyncEnabled || (!s.o365AutoCardEnabled && !s.o365RemoveOnOffboardEnabled))
+    return summary;
   const creds = await loadGraphCreds(env, orgId, db);
   if (!creds) return summary;
-  const uploader = await orgUploaderUserId(db, orgId);
-  if (!uploader) return summary; // no user to attribute cards to
 
   let users: GraphDirectoryUser[];
   try {
@@ -98,7 +94,6 @@ export async function provisionCardsForOrg(
   } catch {
     return summary; // Graph unreachable this run; the next tick retries.
   }
-  const usersById = new Map(users.map((u) => [u.id, u]));
 
   // This org's own verified domains, so a user is only ever filed here when their
   // email domain belongs to THIS org (one query, no cross-org lookup per user).
@@ -134,49 +129,65 @@ export async function provisionCardsForOrg(
     liveCards.map((c) => c.contactEmail?.toLowerCase()).filter(Boolean),
   );
 
-  // Create pass: in-scope users, in this org's domains, without an existing card.
-  for (const u of users) {
-    if (!inScope(u)) continue;
-    // Only users created since the feature was enabled (never backfill existing).
-    if (!cutoff || !u.createdDateTime || u.createdDateTime < cutoff) continue;
-    const email = (u.mail as string).toLowerCase();
-    if (!belongsHere(email)) continue;
-    if (haveCardForEmail.has(email)) continue;
+  // Create pass (spec 0016): in-scope users created since the cutoff, in this org's
+  // domains, without an existing card. Gated by the auto-card toggle.
+  if (s.o365AutoCardEnabled) {
+    // Forward-only: only users created at/after the cutoff (stamped when the toggle
+    // was enabled) — existing staff are never backfilled. No cutoff → create nothing.
+    const cutoff = s.o365AutoCardSince;
+    const uploader = await orgUploaderUserId(db, orgId);
+    if (cutoff && uploader) {
+      for (const u of users) {
+        if (!inScope(u)) continue;
+        if (!u.createdDateTime || u.createdDateTime < cutoff) continue;
+        const email = (u.mail as string).toLowerCase();
+        if (!belongsHere(email)) continue;
+        if (haveCardForEmail.has(email)) continue;
 
-    const fields = userToCard(u);
-    if (!fields) {
-      summary.skipped++;
-      continue;
-    }
-    try {
-      const res = await publishVcardFromBytes(env, orgId, buildVcard(fields), {
-        uploadedBy: uploader,
-        source: "o365_auto",
-        o365UserId: u.id,
-      });
-      if (res.created) {
-        // Write the card's public URL into the user's CustomAttribute1.
-        await syncCardToO365(env, res.fileId);
-        summary.created++;
-        haveCardForEmail.add(email); // guard against duplicate userPrincipal rows
+        const fields = userToCard(u);
+        if (!fields) {
+          summary.skipped++;
+          continue;
+        }
+        try {
+          const res = await publishVcardFromBytes(env, orgId, buildVcard(fields), {
+            uploadedBy: uploader,
+            source: "o365_auto",
+            o365UserId: u.id,
+          });
+          if (res.created) {
+            await syncCardToO365(env, res.fileId); // write the URL into CustomAttribute1
+            summary.created++;
+            haveCardForEmail.add(email); // guard against duplicate userPrincipal rows
+          }
+        } catch {
+          summary.skipped++; // bad bytes / transient; the next tick retries
+        }
       }
-    } catch {
-      summary.skipped++; // bad bytes / transient; the next tick retries
     }
   }
 
-  // Offboard pass: an auto-created card whose user is gone/disabled/unlicensed →
-  // unpublish it and clear the attribute (human-authored cards are never touched).
-  for (const card of liveCards) {
-    if (card.source !== "o365_auto") continue;
-    const u = card.o365UserId ? usersById.get(card.o365UserId) : undefined;
-    if (u && inScope(u)) continue; // still active — leave published
-    try {
-      await autoUnpublishVcard(env, orgId, card.id);
-      await syncCardToO365(env, card.id); // card no longer live → clears attribute
-      summary.unpublished++;
-    } catch {
-      summary.skipped++;
+  // Offboard pass (spec 0017): retract cards — auto OR human-made — for departed
+  // users, where "departed" is a POSITIVE signal (present in the directory AND
+  // disabled AND unlicensed), matched by email and confined to this org's own O365
+  // domains. A user merely absent from the listing is never treated as offboarded.
+  if (s.o365RemoveOnOffboardEnabled) {
+    const offboardedEmails = new Set(
+      users
+        .filter((u) => u.mail && !u.accountEnabled && !u.licensed)
+        .map((u) => (u.mail as string).toLowerCase()),
+    );
+    for (const card of liveCards) {
+      const email = card.contactEmail?.toLowerCase();
+      if (!email || !offboardedEmails.has(email)) continue;
+      if (!belongsHere(email)) continue; // only cards on the org's own O365 domain(s)
+      try {
+        await autoUnpublishVcard(env, orgId, card.id, { offboarded: true });
+        await syncCardToO365(env, card.id); // card no longer live → clears attribute
+        summary.unpublished++;
+      } catch {
+        summary.skipped++;
+      }
     }
   }
 
@@ -190,11 +201,16 @@ export async function provisionCardsAllOrgs(
   const total: ProvisionSummary = { created: 0, unpublished: 0, skipped: 0 };
   if (!env.O365_CRED_KEK) return total;
   const db = buildDb(env.DB);
-  // Only orgs that have opted in; each is fully re-checked in provisionCardsForOrg.
+  // Orgs opted into either behavior; each is fully re-checked in provisionCardsForOrg.
   const enabled = await db
     .select({ orgId: orgSettings.orgId })
     .from(orgSettings)
-    .where(eq(orgSettings.o365AutoCardEnabled, true));
+    .where(
+      or(
+        eq(orgSettings.o365AutoCardEnabled, true),
+        eq(orgSettings.o365RemoveOnOffboardEnabled, true),
+      ),
+    );
   for (const { orgId } of enabled) {
     const s = await provisionCardsForOrg(env, orgId);
     total.created += s.created;

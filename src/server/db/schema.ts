@@ -84,6 +84,10 @@ export const files = sqliteTable(
     // auto-provisioned from the Office 365 directory, so offboarding and the
     // non-clobber rule can tell auto cards from human-authored ones.
     source: text("source").notNull().default("manual"),
+    // When the card was retracted because its O365 user was offboarded (spec 0017).
+    // Set on retract, cleared on re-publish; a nightly purge hard-deletes cards whose
+    // offboarded_at is older than the 30-day grace window. Null for normal cards.
+    offboardedAt: integer("offboarded_at", { mode: "timestamp_ms" }),
     // Office 365 sync state (spec 0010): the card's public URL is written into the
     // matched staff member's Exchange CustomAttribute1 via Microsoft Graph. All
     // null until a sync runs; only meaningful for published vCards.
@@ -313,6 +317,14 @@ export const orgSettings = sqliteTable("org_settings", {
   // this instant get a card, so enabling the feature never backfills existing staff.
   // Set to "now" each time the toggle is turned on.
   o365AutoCardSince: integer("o365_auto_card_since", { mode: "timestamp_ms" }),
+  // Retract + (after 30 days) delete a card when its O365 user is offboarded —
+  // disabled AND unlicensed (spec 0017). Off by default; independent of auto-create.
+  // Covers manual cards too, but only on the org's own verified O365 domains.
+  o365RemoveOnOffboardEnabled: integer("o365_remove_on_offboard_enabled", {
+    mode: "boolean",
+  })
+    .notNull()
+    .default(false),
   updatedAt: updatedAt(),
 });
 
