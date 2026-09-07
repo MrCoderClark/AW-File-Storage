@@ -5,9 +5,11 @@
 // paint, then re-fetched whenever the shared refresh signal bumps (e.g. after an
 // upload settles) so Storage Usage updates without a page reload.
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppData } from "@/components/app-data";
-import { formatBytes, timeAgo } from "@/lib/format";
+import { formatBytes } from "@/lib/format";
 import type { RailData } from "@/server/rail";
 
 function RailPanel({
@@ -27,6 +29,7 @@ function RailPanel({
 
 export function SideRail() {
   const { version, initialRail } = useAppData();
+  const pathname = usePathname();
   const [data, setData] = useState<RailData | null>(initialRail);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(initialRail === null);
@@ -75,10 +78,48 @@ export function SideRail() {
         <>
           <UploadHistoryPanel data={data} loading={loading && !data} />
           <StorageUsagePanel data={data} loading={loading && !data} />
-          <RecentActivityPanel data={data} loading={loading && !data} />
+          <ActivityLogsLink active={pathname === "/activity"} />
         </>
       )}
     </aside>
+  );
+}
+
+// Admin-only entry to the full Activity Logs page (spec 0018), replacing the old
+// Recent Activity panel. Navigates to /activity, which renders in the content area.
+function ActivityLogsLink({ active }: { active: boolean }) {
+  return (
+    <Link
+      href="/activity"
+      aria-current={active ? "page" : undefined}
+      className={`flex items-center gap-2.5 border-b border-border px-5 py-4 text-sm font-semibold transition-colors ${
+        active
+          ? "bg-brand-600 text-white"
+          : "text-slate-800 hover:bg-canvas"
+      }`}
+    >
+      <LogsIcon
+        className={`h-4 w-4 ${active ? "text-white" : "text-muted-500"}`}
+      />
+      Activity logs
+    </Link>
+  );
+}
+
+function LogsIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4 5h16M4 12h16M4 19h10" />
+    </svg>
   );
 }
 
@@ -151,36 +192,3 @@ function StorageUsagePanel({
   );
 }
 
-function RecentActivityPanel({
-  data,
-  loading,
-}: {
-  data: RailData | null;
-  loading: boolean;
-}) {
-  return (
-    <RailPanel title="Recent Activity">
-      {loading || !data ? (
-        <div className="space-y-2">
-          <Skeleton className="h-3 w-full" />
-          <Skeleton className="h-3 w-4/5" />
-          <Skeleton className="h-3 w-3/5" />
-        </div>
-      ) : data.activity.length === 0 ? (
-        <p>Nothing recent.</p>
-      ) : (
-        <ul className="space-y-2.5">
-          {data.activity.map((e) => (
-            <li key={e.id} className="text-xs leading-snug">
-              <span className="text-slate-700">{e.summary}</span>
-              <span className="mt-0.5 block text-muted-500">
-                {e.actorName ? `${e.actorName} · ` : ""}
-                {timeAgo(e.createdAt)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </RailPanel>
-  );
-}
