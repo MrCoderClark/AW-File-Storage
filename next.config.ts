@@ -26,7 +26,10 @@ const APP_CSP = [
   "img-src 'self' https://contacts.awvcard.com data:",
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self' 'unsafe-inline'",
-  "connect-src 'self'",
+  // The browser uploads file bytes DIRECTLY to R2 via a presigned PUT (spec 0003:
+  // Upload Center + Create Card), a cross-origin request to the account's R2 S3
+  // endpoint — so it must be allowed for `connect-src` or the upload is blocked.
+  "connect-src 'self' https://25712314130a03e3364b9be5286c0eef.r2.cloudflarestorage.com",
   "font-src 'self'",
   "form-action 'self'",
 ].join("; ");
