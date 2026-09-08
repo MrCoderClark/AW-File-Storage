@@ -18,6 +18,8 @@ import {
   cardStatDaily,
   files,
   fileVersions,
+  helpArticles,
+  helpImages,
   member,
   orgO365,
   orgSettings,
@@ -54,6 +56,8 @@ type NewFile = Omit<typeof files.$inferInsert, "orgId">;
 type NewFileVersion = Omit<typeof fileVersions.$inferInsert, "orgId">;
 type NewUploadSession = Omit<typeof uploadSessions.$inferInsert, "orgId">;
 type NewAuditEvent = Omit<typeof auditEvents.$inferInsert, "orgId">;
+type NewHelpArticle = Omit<typeof helpArticles.$inferInsert, "orgId">;
+type NewHelpImage = Omit<typeof helpImages.$inferInsert, "orgId">;
 
 /**
  * The ONLY way feature code reaches tenant data. Every method here constrains
@@ -608,6 +612,129 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     },
   };
 
+  // In-app help & documentation CMS (spec 0024). Writes stay strictly org-scoped (the
+  // caller's own org). The ONLY cross-org reads live here and are deliberate: `listForReader`
+  // (own-org published PLUS shared published from any org) and `getServableImage` (own-org, or
+  // an image referenced by a published+shared article). Both are covered by an isolation test.
+  // NOTE: this breaks the "every method constrains to orgId" claim in the file header comment
+  // above; these two reads are the sanctioned exception.
+  const help = {
+    /** Reader feed (spec 0024 AC-4): this org's published articles, plus every org's shared
+     * published articles. The one cross-org read for articles. */
+    async listForReader() {
+      return db
+        .select({
+          id: helpArticles.id,
+          title: helpArticles.title,
+          category: helpArticles.category,
+          excerpt: helpArticles.excerpt,
+          pageKey: helpArticles.pageKey,
+          updatedAt: helpArticles.updatedAt,
+        })
+        .from(helpArticles)
+        .where(
+          and(
+            eq(helpArticles.status, "published"),
+            or(eq(helpArticles.orgId, orgId), eq(helpArticles.shared, true)),
+          ),
+        )
+        .orderBy(
+          helpArticles.category,
+          helpArticles.sortOrder,
+          helpArticles.title,
+        );
+    },
+    /** One published article a reader in this org may see (own or shared), by id. */
+    async getForReader(articleId: string) {
+      const rows = await db
+        .select()
+        .from(helpArticles)
+        .where(
+          and(
+            eq(helpArticles.id, articleId),
+            eq(helpArticles.status, "published"),
+            or(eq(helpArticles.orgId, orgId), eq(helpArticles.shared, true)),
+          ),
+        )
+        .limit(1);
+      return rows[0];
+    },
+    /** Admin list of THIS org's own articles, any status (for the editor, slice 2). */
+    async listOwn() {
+      return db
+        .select()
+        .from(helpArticles)
+        .where(eq(helpArticles.orgId, orgId))
+        .orderBy(helpArticles.category, helpArticles.sortOrder);
+    },
+    /** One of THIS org's own articles by id (any status). */
+    async getOwn(articleId: string) {
+      const rows = await db
+        .select()
+        .from(helpArticles)
+        .where(and(eq(helpArticles.orgId, orgId), eq(helpArticles.id, articleId)))
+        .limit(1);
+      return rows[0];
+    },
+    async create(data: NewHelpArticle) {
+      const rows = await db
+        .insert(helpArticles)
+        .values({ ...data, orgId })
+        .returning();
+      return rows[0];
+    },
+    async update(articleId: string, patch: Partial<NewHelpArticle>) {
+      const rows = await db
+        .update(helpArticles)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(helpArticles.orgId, orgId), eq(helpArticles.id, articleId)))
+        .returning();
+      return rows[0];
+    },
+    async remove(articleId: string) {
+      await db
+        .delete(helpArticles)
+        .where(and(eq(helpArticles.orgId, orgId), eq(helpArticles.id, articleId)));
+    },
+    async createImage(data: NewHelpImage) {
+      const rows = await db
+        .insert(helpImages)
+        .values({ ...data, orgId })
+        .returning();
+      return rows[0];
+    },
+    /** Authorize an image serve (spec 0024 AC-7): return the image only if it belongs to this
+     * org, OR it is referenced by a currently published + shared article. Else undefined. */
+    async getServableImage(imageId: string) {
+      const [img] = await db
+        .select({
+          id: helpImages.id,
+          r2Key: helpImages.r2Key,
+          contentType: helpImages.contentType,
+          imageOrgId: helpImages.orgId,
+          articleId: helpImages.articleId,
+        })
+        .from(helpImages)
+        .where(eq(helpImages.id, imageId))
+        .limit(1);
+      if (!img) return undefined;
+      if (img.imageOrgId === orgId) return img; // own org
+      if (!img.articleId) return undefined;
+      const [shared] = await db
+        .select({ id: helpArticles.id })
+        .from(helpArticles)
+        .where(
+          and(
+            eq(helpArticles.id, img.articleId),
+            eq(helpArticles.status, "published"),
+            eq(helpArticles.shared, true),
+          ),
+        )
+        .limit(1);
+      return shared ? img : undefined;
+    },
+  };
+
   return {
     orgId,
     files: files_,
@@ -618,6 +745,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     socialLinks,
     cardStats,
     graphCreds,
+    help,
   };
 }
 

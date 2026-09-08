@@ -408,3 +408,74 @@ export const accountLock = sqliteTable("account_lock", {
   lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
   lockLevel: integer("lock_level").notNull().default(0),
 });
+
+// In-app help & documentation CMS (spec 0024). Per-org articles authored by an org's
+// owner/admin; the platform owner additionally authors global content in their OWN org and
+// flags it `shared` so it shows in every org. Readers see own-org published PLUS shared
+// published (the one cross-org read, in orgDb().help.listForReader). `body_html` is
+// sanitized before store. Reader routes by `id`, so `slug` is cosmetic and needs no
+// cross-org uniqueness. Additive leaf tables — a create-only migration, no parent rebuild
+// (gotcha #9).
+export const helpArticles = sqliteTable(
+  "help_article",
+  {
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    slug: text("slug").notNull(), // cosmetic label; the reader routes by id
+    category: text("category").notNull().default("General"),
+    bodyHtml: text("body_html").notNull().default(""), // sanitized on save (help-sanitize.ts)
+    excerpt: text("excerpt"),
+    // Contextual help: matches a stable per-route key so the drawer can show
+    // "for this page" articles. Null = not tied to a page.
+    pageKey: text("page_key"),
+    status: text("status", { enum: ["draft", "published"] })
+      .notNull()
+      .default("draft"),
+    // Platform-owner-only flag (set from their own org): makes the article visible to every
+    // org's readers. Never a cross-org write; only a cross-org read (listForReader).
+    shared: integer("shared", { mode: "boolean" }).notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    updatedBy: text("updated_by").references(() => user.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("help_article_org_status_cat_idx").on(
+      t.orgId,
+      t.status,
+      t.category,
+      t.sortOrder,
+    ),
+    index("help_article_org_pagekey_idx").on(t.orgId, t.pageKey),
+    // Serves the cross-org shared read (spec 0024). Intentionally does NOT lead with org_id
+    // (the one documented exception to the org_id-leading index rule).
+    index("help_article_shared_status_idx").on(t.shared, t.status),
+    check("help_article_status_ck", sql`${t.status} in ('draft','published')`),
+  ],
+);
+
+// Images embedded in help articles (spec 0024). Stored in the PRIVATE R2 bucket and served
+// through an authorized route (own-org, or referenced by a published+shared article), never
+// publicly enumerable. `article_id` is nullable until the article is first saved, then set
+// so the serve route can authorize and orphans can be swept.
+export const helpImages = sqliteTable(
+  "help_image",
+  {
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    articleId: text("article_id").references(() => helpArticles.id, {
+      onDelete: "cascade",
+    }),
+    r2Key: text("r2_key").notNull(),
+    contentType: text("content_type").notNull(),
+    uploadedBy: text("uploaded_by").references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("help_image_org_article_idx").on(t.orgId, t.articleId)],
+);
