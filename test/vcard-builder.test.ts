@@ -108,6 +108,31 @@ describe("buildVcard", () => {
   });
 });
 
+// Abuse bounds on the publish gate (spec 0022): a normal card passes; a card that is
+// too large or has too many lines is rejected before it can be published or re-parsed
+// on every landing/PDF hit.
+describe("validateVcard abuse bounds", () => {
+  it("accepts a normal card", () => {
+    expect(validateVcard(buildVcard(minimal)).ok).toBe(true);
+  });
+
+  it("rejects a card over the 256 KB size cap", () => {
+    const bloat = "NOTE:" + "x".repeat(300 * 1024) + "\r\n";
+    const vcf = `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jane Doe\r\n${bloat}END:VCARD\r\n`;
+    const result = validateVcard(vcf);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/too large/i);
+  });
+
+  it("rejects a card with too many lines", () => {
+    const many = Array.from({ length: 600 }, (_, i) => `NOTE:line ${i}`).join("\r\n");
+    const vcf = `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jane Doe\r\n${many}\r\nEND:VCARD\r\n`;
+    const result = validateVcard(vcf);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/too many lines/i);
+  });
+});
+
 describe("deriveSlug (First_Last, case preserved)", () => {
   it("joins words with underscores and keeps case", () => {
     expect(deriveSlug("Jay Clark")).toBe("Jay_Clark");

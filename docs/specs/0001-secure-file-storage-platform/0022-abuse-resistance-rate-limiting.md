@@ -71,27 +71,31 @@ backstops.
   `Cache-Control: public, max-age=…`, and ensure the response does not vary on a
   cache-busting query (ignore unknown query params for the cache key, or strip them). A
   cold hit computes once; repeat hits are served from cache.
-- **AC-4 (PDF cost control)**: `/c/<slug>.pdf` is made cheaper to serve repeatedly —
-  either (a) allow shared caching of the generated PDF for a short TTL
-  (`Cache-Control: public, s-maxage=…` on the public host, since the PDF is derived from
-  the already-public card and contains no private data), or (b) keep `no-store` but rely
-  on the AC-1 WAF ceiling. The choice is documented; if (a), confirm the PDF carries no
-  per-viewer data (it does not — it is built from the public `.vcf`).
+- **AC-4 (PDF cost control)**: **Chosen: (b)** — keep `/c/<slug>.pdf` at `no-store` and rely
+  on the AC-1 WAF ceiling, so every save still counts under the `pdf` metric (spec 0008);
+  shared-caching it would drop the count on cache hits. (Option (a), a short `s-maxage` on the
+  public host, stays available if PDF cost ever outweighs metric precision — the PDF holds no
+  per-viewer data, being built from the public `.vcf`.)
 - **AC-5 (app-level throttle on sensitive actions)**: A lightweight, DB-backed per-user
-  (and/or per-IP) throttle guards `POST /api/uploads` (upload reservation),
-  `POST /api/files/[id]/link` (signed-link issuance), and the invitation/reset actions
-  not already limited, returning `429` with a `Retry-After` when exceeded. Reuse the
-  existing lockout/rate primitives rather than adding a new dependency. Limits are
-  generous enough never to affect a real user.
-- **AC-6 (pending-upload hygiene)**: `POST /api/uploads` cannot accumulate unbounded
-  `pending` `file`/`upload_session` rows for one user — either the throttle (AC-5) bounds
-  the rate, or a cap on concurrent un-finalized sessions per user is enforced, or the
-  existing cleanup sweep is confirmed to reclaim abandoned pending rows promptly (state
-  which, in verify).
-- **AC-7 (vCard field bounds)**: `validateVcard` additionally rejects a card with an
-  absurd number of content lines or an individual field beyond a generous cap (e.g. > ~200
-  lines, or a single value > ~8 KB), with a readable reason. Real cards are far under
-  these; this only stops pathological input. Total 256 KB cap unchanged.
+  throttle guards `POST /api/uploads` (upload reservation) and `POST /api/files/[id]/link`
+  (signed-link issuance), returning `429` with a `Retry-After` when exceeded.
+  **Implemented with no new table**: uploads use a **concurrent-pending cap** (a user with
+  ≥50 un-finalized, unexpired `upload_session` rows → 429) rather than a rate, so a genuine
+  bulk upload — which finalizes each reservation quickly — is never throttled while a script
+  that reserves without finalizing is stopped; the link throttle counts the user's
+  `file.link_created` `audit_event` rows in the last 60s (≥60 → 429). Limits are generous
+  enough never to affect a real user. Invitation resend is already rate-limited (spec 0005
+  AC-16); sign-in/reset are covered by Better Auth's limiter + the lockout.
+- **AC-6 (pending-upload hygiene)**: Satisfied directly by AC-5's concurrent-pending cap —
+  one user can hold at most 50 un-finalized reservations; abandoned ones expire (15-min TTL)
+  and stop counting, and the existing scheduled cleanup reclaims them.
+- **AC-7 (vCard content bounds)**: `validateVcard` — the single publish gate for every path
+  (upload finalize, create, edit, auto-provision) — additionally rejects a card whose raw
+  content exceeds **256 KB** (this also closes a real gap: the upload reservation only checks
+  the client's *declared* size, so `finalizeUpload` never re-capped the actual vCard bytes)
+  or has more than **512 content lines**, each with a readable reason. A per-field length cap
+  was intentionally **not** added — it would reject a legitimate embedded `PHOTO`, and the
+  total-byte + line-count bounds already stop pathological input. Real cards are far under both.
 - **AC-8 (no regression)**: Normal usage — scanning a QR, opening a landing page,
   downloading a `.vcf`/`.pdf`, uploading, creating a card, signing in — is unaffected;
   limits are set well above real traffic and verified not to trip in the happy path.
@@ -115,11 +119,13 @@ authenticated actions. Bound vCard fields in the existing validator.
 
 ## Feature design
 
-**Edge (Cloudflare WAF).** Add rate-limiting rules (documented in `config/`, mirroring how
-`config/r2-cors.json` documents CORS):
+**Edge (Cloudflare WAF).** Rate-limiting rules documented in
+`config/cloudflare-rate-limits.md` (mirroring how `config/r2-cors.json` documents CORS):
 - `contacts.awvcard.com` `/c/*` and `/api/cards/*/qr`: per-IP request ceiling over a short
   window; action = block/challenge with a short timeout.
 - `www.awvcard.com` `/api/auth/*`: per-IP ceiling, complementing Better Auth's limiter.
+- Plus a **Cache Rule** normalising the QR cache key (ignore query string) so a cache-busting
+  query can't force recompute (AC-3).
 
 **QR caching.** In `src/app/api/cards/[id]/qr/route.ts`, keep `public, max-age=3600` and
 make the handler ignore unrecognized query params so a `?x=random` can't force recompute
@@ -131,11 +137,13 @@ browser revalidates) — the PDF is derived from the public card and carries no 
 data. On the app host keep `no-store` (it's a gated staff preview). Counting stays
 fire-and-forget as today. Document the decision inline.
 
-**App throttle.** Introduce a small helper (alongside `src/server/lockout.ts`) that records
-a per-user (or per-IP) action count in D1 with a rolling window and returns whether the
-action is allowed; wire it into `POST /api/uploads`, `POST /api/files/[id]/link`, and the
-reset/invite actions not already limited, returning `429` + `Retry-After` past the ceiling.
-Prefer extending the existing lockout/rate tables over a new one.
+**App throttle (no new table).** In `src/server/uploads.ts`, `requestUpload` counts the
+user's un-finalized, unexpired `upload_session` rows (`completed_at IS NULL AND expires_at >
+now`) and throws `UploadError(429, …, 60)` at ≥50 — a concurrent-pending cap, not a rate, so
+bulk upload is unaffected; `createPrivateLink` counts the user's `file.link_created`
+`audit_event` rows in the last 60s and throws at ≥60. `UploadError` gains an optional
+`retryAfterSeconds`, which the two routes (`/api/uploads`, `/api/files/[id]/link`) surface as
+a `Retry-After` header. Reuses existing tables — no migration, no new dependency.
 
 **vCard bounds.** In `validateVcard`, after the structural checks, reject when
 `nonEmpty.length` exceeds a generous line cap or any single line's value exceeds a

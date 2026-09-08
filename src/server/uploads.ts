@@ -4,6 +4,7 @@ import {
   desc,
   eq,
   gt,
+  gte,
   isNotNull,
   isNull,
   like,
@@ -95,8 +96,35 @@ export class UploadError extends Error {
   constructor(
     public status: number,
     message: string,
+    // For a 429, how long the caller should wait before retrying — the route
+    // surfaces it as a `Retry-After` header (spec 0022).
+    public retryAfterSeconds?: number,
   ) {
     super(message);
+  }
+}
+
+// App-level throttles (spec 0022), a backstop behind the Cloudflare WAF edge rules:
+// they bound a single authenticated user (whom a per-IP edge rule can miss). Generous
+// enough to never trip real use.
+//
+// Uploads use a CONCURRENT-PENDING cap, not a rate: a real bulk upload (dozens of
+// files, 3 at a time from the UI) finalizes each reservation quickly, so few are
+// pending at once — but a script that reserves without ever finalizing is stopped once
+// it has this many un-finalized, unexpired sessions. Abandoned reservations expire
+// (15-min TTL) and stop counting, and the nightly cleanup reclaims them.
+const RATE_WINDOW_MS = 60_000; // 1 minute (link issuance)
+const MAX_PENDING_UPLOADS = 50;
+const MAX_LINKS_PER_WINDOW = 60;
+
+/** Throw 429 if `count` in the current window is at/over `max`. */
+function assertUnderRate(count: number, max: number, what: string): void {
+  if (count >= max) {
+    throw new UploadError(
+      429,
+      `Too many ${what} in a short time. Please wait a moment and try again.`,
+      60,
+    );
   }
 }
 
@@ -121,6 +149,28 @@ export async function requestUpload(
   }
 
   const db = buildDb(env.DB);
+
+  // Cap concurrent un-finalized uploads per user (spec 0022): bounds how many
+  // pending file/upload_session rows one user can accumulate without finalizing.
+  const [pending] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.uploadSessions)
+    .where(
+      and(
+        eq(schema.uploadSessions.orgId, ctx.orgId),
+        eq(schema.uploadSessions.userId, ctx.userId),
+        isNull(schema.uploadSessions.completedAt),
+        gt(schema.uploadSessions.expiresAt, new Date()),
+      ),
+    );
+  if (Number(pending?.n ?? 0) >= MAX_PENDING_UPLOADS) {
+    throw new UploadError(
+      429,
+      "Too many uploads in progress. Finish or wait for pending uploads to clear before starting more.",
+      60,
+    );
+  }
+
   const [org] = await db
     .select({
       used: schema.organization.storageUsedBytes,
@@ -701,6 +751,26 @@ export async function createPrivateLink(
   if (file.status !== "ready") {
     throw new UploadError(409, "This file is not ready to download.");
   }
+
+  // Rate-limit signed-link issuance per user (spec 0022), counting this user's recent
+  // `file.link_created` audit rows in this org.
+  const since = new Date(Date.now() - RATE_WINDOW_MS);
+  const [recentLinks] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.auditEvents)
+    .where(
+      and(
+        eq(schema.auditEvents.orgId, ctx.orgId),
+        eq(schema.auditEvents.actorUserId, ctx.userId),
+        eq(schema.auditEvents.action, "file.link_created"),
+        gte(schema.auditEvents.createdAt, since),
+      ),
+    );
+  assertUnderRate(
+    Number(recentLinks?.n ?? 0),
+    MAX_LINKS_PER_WINDOW,
+    "download links",
+  );
 
   const url = await presignGet(
     r2Config(env),
