@@ -9,6 +9,9 @@ import { createPortal } from "react-dom";
 // The drawer loads the reader feed (GET /api/help), offers search, a "For this page"
 // contextual list, a browse-by-category list, a link to the full /help page, and a
 // contact-support mailto. Reading only; authoring lives in Settings (slice 2).
+//
+// The panel stays mounted and animates open/closed (slide + backdrop fade) so it never
+// flashes; a global prefers-reduced-motion rule neutralises the motion for those who ask.
 
 // Placeholder support address (spec 0024 follow-up: set the real one).
 const SUPPORT_EMAIL = "support@americaworks.com";
@@ -42,19 +45,27 @@ export function HelpLauncher() {
       >
         <HelpIcon className="h-5 w-5" />
       </button>
-      {open && <HelpDrawer onClose={() => setOpen(false)} />}
+      <HelpDrawer open={open} onClose={() => setOpen(false)} />
     </>
   );
 }
 
-function HelpDrawer({ onClose }: { onClose: () => void }) {
+function HelpDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [articles, setArticles] = useState<Article[] | null>(null);
   const [error, setError] = useState(false);
   const [q, setQ] = useState("");
   const pageKey = pageKeyFromPath(pathname ?? "");
 
+  // Portal target only exists in the browser.
+  useEffect(() => setMounted(true), []);
+
+  // Lazy-load the feed the first time the drawer is opened.
   useEffect(() => {
+    if (!open || loaded) return;
+    setLoaded(true);
     let alive = true;
     fetch("/api/help", { cache: "no-store" })
       .then((r) =>
@@ -71,15 +82,19 @@ function HelpDrawer({ onClose }: { onClose: () => void }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [open, loaded]);
 
+  // Esc closes, only while open.
   useEffect(() => {
+    if (!open) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [open, onClose]);
+
+  if (!mounted) return null;
 
   const all = articles ?? [];
   const term = q.trim().toLowerCase();
@@ -97,19 +112,28 @@ function HelpDrawer({ onClose }: { onClose: () => void }) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex justify-end"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Help"
+      className={`fixed inset-0 z-50 ${open ? "" : "pointer-events-none"}`}
+      aria-hidden={!open}
     >
+      {/* Backdrop */}
       <button
         type="button"
         aria-label="Close help"
         tabIndex={-1}
         onClick={onClose}
-        className="absolute inset-0 cursor-default bg-slate-900/40"
+        className={`absolute inset-0 cursor-default bg-slate-900/40 transition-opacity duration-200 ${
+          open ? "opacity-100" : "opacity-0"
+        }`}
       />
-      <aside className="relative flex h-full w-full max-w-sm flex-col bg-surface shadow-xl">
+      {/* Panel */}
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="Help"
+        className={`absolute right-0 top-0 flex h-full w-full max-w-sm flex-col bg-surface shadow-xl transition-transform duration-200 ease-out ${
+          open ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <h2 className="text-base font-semibold text-brand-900">Help</h2>
           <button
