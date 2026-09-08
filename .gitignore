@@ -31,6 +31,10 @@ wrangler.local.jsonc
 /playwright-report
 /test-results
 
+# generated security doc + any screenshots — keep out of the repo (binary + sensitive:
+# enumerates defenses and, once populated, shows Cloudflare account/config screenshots)
+*.docx
+
 # logs / os
 *.log
 npm-debug.log*
