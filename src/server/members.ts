@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { hashPassword } from "better-auth/crypto";
 import { and, desc, eq, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { type AuthEnv } from "./auth";

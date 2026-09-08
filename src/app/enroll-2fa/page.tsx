@@ -30,10 +30,16 @@ export default function EnrollTwoFactorPage() {
       setError("Could not start enrolment. Check your password.");
       return;
     }
-    const uri = data.totpURI ?? "";
+    // Better Auth 1.7 returns a discriminated union keyed by `method`; the TOTP
+    // enrolment (what this page does) carries totpURI + backupCodes (spec 0023).
+    if (data.method !== "totp") {
+      setError("Could not start enrolment. Check your password.");
+      return;
+    }
+    const uri = data.totpURI;
     setTotpUri(uri);
     setSecret(new URLSearchParams(uri.split("?")[1] ?? "").get("secret") ?? "");
-    setBackupCodes(data.backupCodes ?? []);
+    setBackupCodes(data.backupCodes);
     setStep("verify");
   }
 
