@@ -33,6 +33,16 @@ Assessed reachability of the ten advisories against this app's actual Better Aut
 So the effective risk to the deployed app is negligible today. The residual reason to act
 is hygiene and defence in depth: get off a version with a standing critical bundle.
 
+**Why 1.4.21, and what it de-risks (from git history):** commit `25bee55` (2026-08-27)
+changed `better-auth` from `^1.7.2` **down** to `^1.4.21`, message *"Pin better-auth to
+1.4.21 to match the schema CLI."* The pin exists **solely** to match `@better-auth/cli`
+(the schema generator lagged the runtime); it is **not** a Cloudflare/OpenNext/Workers
+runtime incompatibility and **not** a peer-dependency conflict with another package. The
+project demonstrably ran **1.7.2 on this exact Workers/OpenNext/D1 stack** before the
+downgrade. That means the upgrade target (`1.7.3`, the patched line) is a version family
+already proven here — the task is really "return to 1.7.x with `@better-auth/cli` bumped in
+lockstep so the generated schema matches," not a leap into an unproven runtime.
+
 **Why this is not an `npm audit fix`:**
 1. The fix installs `better-auth@1.7.3`, "outside the stated dependency range" — it breaks
    the intentional **1.4.21 pin** (now hard-pinned exact in `package.json` so audit-fix
