@@ -8,7 +8,21 @@ export type VcardResult =
   | { ok: true; normalized: string; formattedName: string }
   | { ok: false; reason: string };
 
+// Abuse bounds (spec 0022). MAX_BYTES mirrors uploads.ts MAX_VCARD_BYTES and is the
+// real publish gate on CONTENT size: the upload reservation only checks the client's
+// declared size, so an oversized card would otherwise slip through finalize. MAX_LINES
+// stops a pathological card that stays under the byte cap but has thousands of lines
+// (each re-parsed on every landing/PDF hit). A normal card is a few dozen lines.
+const MAX_VCARD_BYTES = 262144; // 256 KB
+const MAX_VCARD_LINES = 512;
+
 export function validateVcard(raw: string): VcardResult {
+  if (new TextEncoder().encode(raw).length > MAX_VCARD_BYTES) {
+    return {
+      ok: false,
+      reason: "The contact card is too large (256 KB maximum).",
+    };
+  }
   // Strip a leading byte-order mark and normalise line endings.
   const text = raw.replace(/^﻿/, "");
   const lines = text.split(/\r\n|\r|\n/);
@@ -17,6 +31,12 @@ export function validateVcard(raw: string): VcardResult {
 
   const nonEmpty = lines.filter((l) => l.trim() !== "");
   if (nonEmpty.length === 0) return { ok: false, reason: "The file is empty." };
+  if (nonEmpty.length > MAX_VCARD_LINES) {
+    return {
+      ok: false,
+      reason: "The contact card has too many lines to be a valid card.",
+    };
+  }
 
   const begins = nonEmpty.filter((l) => l.trim().toUpperCase() === "BEGIN:VCARD");
   const ends = nonEmpty.filter((l) => l.trim().toUpperCase() === "END:VCARD");

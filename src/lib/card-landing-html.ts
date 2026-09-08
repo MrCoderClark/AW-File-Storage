@@ -41,13 +41,14 @@ const SOCIAL_LABEL = {
   linkedin: "LinkedIn",
 } as const;
 
-/** Escape a value for safe inclusion in HTML text/attributes. */
+/** Escape a value for safe inclusion in HTML text/attributes (single- or double-quoted). */
 function esc(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /** `tel:` href from a display number (digits only; extension after `x`). */

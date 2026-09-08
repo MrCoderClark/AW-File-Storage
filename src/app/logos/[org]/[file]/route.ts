@@ -52,6 +52,8 @@ export async function GET(
       "Cache-Control": "public, max-age=3600",
       // The contacts host is noindex overall; keep image responses consistent.
       "X-Robots-Tag": "noindex, nofollow",
+      // Serve the stored image type verbatim; never let a client sniff it.
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }

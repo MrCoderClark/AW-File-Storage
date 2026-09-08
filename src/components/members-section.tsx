@@ -16,7 +16,14 @@ interface MemberRow {
   joinedAt: string;
 }
 
-export function MembersSection({ currentUserId }: { currentUserId: string }) {
+export function MembersSection({
+  currentUserId,
+  currentUserRole,
+}: {
+  currentUserId: string;
+  currentUserRole: "owner" | "admin" | "member";
+}) {
+  const isOwnerCaller = currentUserRole === "owner";
   const [members, setMembers] = useState<MemberRow[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -134,6 +141,7 @@ export function MembersSection({ currentUserId }: { currentUserId: string }) {
                   key={m.id}
                   member={m}
                   isSelf={m.userId === currentUserId}
+                  isOwnerCaller={isOwnerCaller}
                   onChanged={() => load()}
                 />
               ))}
@@ -161,12 +169,19 @@ export function MembersSection({ currentUserId }: { currentUserId: string }) {
 function MemberRowView({
   member,
   isSelf,
+  isOwnerCaller,
   onChanged,
 }: {
   member: MemberRow;
   isSelf: boolean;
+  isOwnerCaller: boolean;
   onChanged: () => void | Promise<void>;
 }) {
+  // Only an owner may change/suspend/remove an owner, or grant the owner role
+  // (spec 0021). A non-owner caller sees an owner row as read-only, and never the
+  // "Owner" option in the role select. The server enforces this regardless.
+  const targetIsOwner = member.role === "owner";
+  const lockedOwnerTarget = targetIsOwner && !isOwnerCaller;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -273,7 +288,7 @@ function MemberRowView({
       </td>
       <td className="px-4 py-3 text-muted-500">{member.email}</td>
       <td className="px-4 py-3">
-        {isSelf ? (
+        {isSelf || lockedOwnerTarget ? (
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium capitalize text-slate-600">
             {member.role}
           </span>
@@ -285,7 +300,8 @@ function MemberRowView({
             onChange={(e) => void changeRole(e.target.value)}
             className="rounded-[--radius-panel] border border-border bg-canvas px-2 py-1 text-xs capitalize focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/25 disabled:opacity-50"
           >
-            <option value="owner">Owner</option>
+            {/* Only an owner may grant the owner role (spec 0021). */}
+            {isOwnerCaller && <option value="owner">Owner</option>}
             <option value="admin">Admin</option>
             <option value="member">Member</option>
           </select>
@@ -337,7 +353,7 @@ function MemberRowView({
                 >
                   View details
                 </MenuLink>
-                {!isSelf && member.status === "suspended" && (
+                {!isSelf && !lockedOwnerTarget && member.status === "suspended" && (
                   <MenuItem
                     onClick={() => {
                       setMenuOpen(false);
@@ -347,7 +363,7 @@ function MemberRowView({
                     Reactivate
                   </MenuItem>
                 )}
-                {!isSelf && member.status === "active" && (
+                {!isSelf && !lockedOwnerTarget && member.status === "active" && (
                   <MenuItem
                     onClick={() => {
                       setMenuOpen(false);
@@ -357,7 +373,7 @@ function MemberRowView({
                     Suspend
                   </MenuItem>
                 )}
-                {!isSelf && (
+                {!isSelf && !lockedOwnerTarget && (
                   <MenuItem
                     danger
                     onClick={() => {
