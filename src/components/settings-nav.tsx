@@ -21,6 +21,7 @@ const ADMIN: NavItem[] = [
   { href: "/settings/social-links", label: "Regional social links" },
   { href: "/settings/o365", label: "Office 365" },
   { href: "/settings/site", label: "Site" },
+  { href: "/settings/help", label: "Help articles" },
 ];
 
 const PLATFORM: NavItem[] = [

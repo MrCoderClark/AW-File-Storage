@@ -703,6 +703,17 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         .returning();
       return rows[0];
     },
+    /** Link this org's images to an article (spec 0024 AC-7), so a shared article's images
+     * resolve cross-org and orphans can be swept. Own-org only; call on article save. */
+    async linkImages(articleId: string, imageIds: string[]) {
+      if (imageIds.length === 0) return;
+      await db
+        .update(helpImages)
+        .set({ articleId })
+        .where(
+          and(eq(helpImages.orgId, orgId), inArray(helpImages.id, imageIds)),
+        );
+    },
     /** Authorize an image serve (spec 0024 AC-7): return the image only if it belongs to this
      * org, OR it is referenced by a currently published + shared article. Else undefined. */
     async getServableImage(imageId: string) {
