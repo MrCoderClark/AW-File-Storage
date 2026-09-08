@@ -1,11 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import {
-  sqliteTable,
-  text,
-  integer,
-  index,
-  uniqueIndex,
-} from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -97,21 +91,21 @@ export const verification = sqliteTable(
   (table) => [index("verification_identifier_idx").on(table.identifier)],
 );
 
-export const organization = sqliteTable(
-  "organization",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    slug: text("slug").notNull().unique(),
-    logo: text("logo"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    metadata: text("metadata"),
-    storageQuotaBytes: integer("storage_quota_bytes").default(10737418240),
-    storageUsedBytes: integer("storage_used_bytes").default(0),
-    publicDomain: text("public_domain").default("contacts.americaworks.com"),
-  },
-  (table) => [uniqueIndex("organization_slug_uidx").on(table.slug)],
-);
+export const organization = sqliteTable("organization", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  logo: text("logo"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  metadata: text("metadata"),
+  storageQuotaBytes: integer("storage_quota_bytes")
+    .default(10737418240)
+    .notNull(),
+  storageUsedBytes: integer("storage_used_bytes").default(0).notNull(),
+  publicDomain: text("public_domain")
+    .default("contacts.americaworks.com")
+    .notNull(),
+});
 
 export const member = sqliteTable(
   "member",
@@ -125,10 +119,10 @@ export const member = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     role: text("role").default("member").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    status: text("status").default("active"),
-    twoFactorRequired: integer("two_factor_required", {
-      mode: "boolean",
-    }).default(false),
+    status: text("status").default("active").notNull(),
+    twoFactorRequired: integer("two_factor_required", { mode: "boolean" })
+      .default(false)
+      .notNull(),
   },
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),
@@ -169,6 +163,9 @@ export const twoFactor = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    verified: integer("verified", { mode: "boolean" }).default(true),
+    failedVerificationCount: integer("failed_verification_count").default(0),
+    lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
   },
   (table) => [
     index("twoFactor_secret_idx").on(table.secret),

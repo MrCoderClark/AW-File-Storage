@@ -1,6 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { betterAuth } from "better-auth";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { eq } from "drizzle-orm";
 import { authPlugins, authSharedOptions } from "@/server/auth-options";
 import { buildDb } from "@/server/db";
