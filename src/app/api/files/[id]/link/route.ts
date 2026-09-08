@@ -17,7 +17,15 @@ export async function POST(
     return Response.json({ ok: true, ...result });
   } catch (e) {
     if (e instanceof UploadError) {
-      return Response.json({ ok: false, error: e.message }, { status: e.status });
+      return Response.json(
+        { ok: false, error: e.message },
+        {
+          status: e.status,
+          headers: e.retryAfterSeconds
+            ? { "Retry-After": String(e.retryAfterSeconds) }
+            : undefined,
+        },
+      );
     }
     throw e;
   }

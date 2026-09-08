@@ -42,7 +42,7 @@ export async function requireSession() {
  * null when there is no usable session/org.
  */
 export async function getActor(): Promise<
-  { orgId: string; userId: string; canManageAny: boolean } | null
+  { orgId: string; userId: string; role: Role; canManageAny: boolean } | null
 > {
   const session = await getSession();
   if (!session) return null;
@@ -51,10 +51,11 @@ export async function getActor(): Promise<
   if (!orgId) return null;
   const auth = getAuth();
   const member = await auth.api.getActiveMember({ headers: await headers() });
-  const role = member?.role;
+  const role = (member?.role as Role | undefined) ?? "member";
   return {
     orgId,
     userId: session.user.id,
+    role,
     canManageAny: role === "owner" || role === "admin",
   };
 }
