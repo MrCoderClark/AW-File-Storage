@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { authPlugins, authSharedOptions } from "./src/server/auth-options";
 
 /**
