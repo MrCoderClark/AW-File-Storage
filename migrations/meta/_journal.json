@@ -169,6 +169,13 @@
       "when": 1788893211005,
       "tag": "0023_dry_mattie_franklin",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1788959352175,
+      "tag": "0024_sour_bug",
+      "breakpoints": true
     }
   ]
 }

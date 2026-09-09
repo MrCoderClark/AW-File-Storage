@@ -40,7 +40,9 @@ export default async function AppLayout({
             activeOrgId={shell.activeOrgId}
             orgs={shell.orgs}
           />
-          <AppNav />
+          <AppNav
+            canManage={shell.role === "owner" || shell.role === "admin"}
+          />
         </div>
         <AppShellBody rail={<SideRail />}>{children}</AppShellBody>
         <footer className="flex items-center justify-between border-t border-border bg-surface px-6 py-3 text-xs text-muted-500 print:hidden">

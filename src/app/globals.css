@@ -66,3 +66,141 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Rich-text article typography for the help CMS (spec 0024). Applied to the sanitized HTML on
+   the published article page AND to the Tiptap editor body, so what an author writes looks the
+   same as what readers see (true WYSIWYG). Matches the knowledge-base mock: bold navy
+   headings, comfortable spacing, real list markers, soft code blocks. */
+.help-content {
+  color: #1e293b;
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+.help-content > :first-child {
+  margin-top: 0;
+}
+.help-content h1,
+.help-content h2,
+.help-content h3,
+.help-content h4 {
+  color: var(--color-brand-900);
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 1.6em 0 0.5em;
+}
+.help-content h1 {
+  font-size: 1.6rem;
+}
+.help-content h2 {
+  font-size: 1.3rem;
+}
+.help-content h3 {
+  font-size: 1.1rem;
+}
+.help-content h4 {
+  font-size: 1rem;
+}
+.help-content p {
+  margin: 0.75em 0;
+}
+.help-content ul,
+.help-content ol {
+  margin: 0.75em 0;
+  padding-left: 1.5rem;
+}
+.help-content ul {
+  list-style: disc;
+}
+.help-content ol {
+  list-style: decimal;
+}
+.help-content li {
+  margin: 0.3em 0;
+}
+.help-content a {
+  color: var(--color-accent-500);
+  text-decoration: underline;
+}
+.help-content strong {
+  font-weight: 600;
+  color: #0f172a;
+}
+.help-content blockquote {
+  margin: 1em 0;
+  padding: 0.25rem 1rem;
+  border-left: 3px solid var(--color-accent-500);
+  color: var(--color-muted-500);
+}
+.help-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  background: #f1f5f9;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+.help-content pre {
+  position: relative; /* positioning context for the injected copy button */
+  margin: 1em 0;
+  background: #f1f5f9;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-drop);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+}
+/* Copy button injected at runtime by HelpArticleBody (spec 0025 AC-7); never in stored HTML. */
+.help-copy-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-muted-500, #64748b);
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.12s ease-in-out;
+}
+.help-content pre:hover .help-copy-btn,
+.help-copy-btn:hover,
+.help-copy-btn:focus-visible {
+  opacity: 1;
+}
+.help-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85rem;
+}
+.help-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 1em 0;
+}
+.help-content hr {
+  margin: 1.5em 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+.help-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.9rem;
+}
+.help-content th,
+.help-content td {
+  border: 1px solid var(--color-border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+.help-content th {
+  background: var(--color-canvas);
+  font-weight: 600;
+}
+/* Tiptap editor surface reuses .help-content; keep focus clean and give the empty doc room. */
+.help-content:focus {
+  outline: none;
+}

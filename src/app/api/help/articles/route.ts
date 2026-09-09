@@ -34,6 +34,11 @@ export async function POST(req: Request) {
     title?: string;
     slug?: string;
     category?: string;
+    categoryId?: string;
+    tags?: string[];
+    featuredImageId?: string;
+    relatedIds?: string[];
+    audience?: string;
     bodyHtml?: string;
     excerpt?: string;
     pageKey?: string;
@@ -55,6 +60,11 @@ export async function POST(req: Request) {
     title,
     slug: body.slug?.trim() || helpSlugify(title),
     category: body.category?.trim() || "General",
+    categoryId: body.categoryId?.trim() || null,
+    tags: JSON.stringify(Array.isArray(body.tags) ? body.tags : []),
+    featuredImageId: body.featuredImageId?.trim() || null,
+    relatedIds: JSON.stringify(Array.isArray(body.relatedIds) ? body.relatedIds : []),
+    audience: body.audience === "admins" ? "admins" : "all",
     bodyHtml,
     excerpt: body.excerpt?.trim() || null,
     pageKey: body.pageKey?.trim() || null,

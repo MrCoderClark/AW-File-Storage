@@ -438,6 +438,16 @@ export const helpArticles = sqliteTable(
     // org's readers. Never a cross-org write; only a cross-org read (listForReader).
     shared: integer("shared", { mode: "boolean" }).notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
+    // Knowledge base fields (spec 0025). `category_id`/`featured_image_id` are LOGICAL
+    // references (not DB foreign keys) so these stay pure additive ADD COLUMNs with no
+    // help_article rebuild on D1 (gotcha #9); the relationships are enforced in orgDb().help.
+    categoryId: text("category_id"), // -> help_category.id (same org), or null
+    tags: text("tags").notNull().default("[]"), // JSON string array
+    featuredImageId: text("featured_image_id"), // -> help_image.id, or null
+    relatedIds: text("related_ids").notNull().default("[]"), // JSON array of same-org article ids
+    // Who may read a published article: 'all' signed-in staff, or 'admins' only (spec 0025).
+    // Enforced in the reader queries by the caller's role. Independent of `shared` (cross-org).
+    audience: text("audience", { enum: ["all", "admins"] }).notNull().default("all"),
     publishedAt: integer("published_at", { mode: "timestamp_ms" }),
     updatedBy: text("updated_by").references(() => user.id),
     createdAt: createdAt(),
@@ -478,4 +488,26 @@ export const helpImages = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [index("help_image_org_article_idx").on(t.orgId, t.articleId)],
+);
+
+// Help knowledge-base categories (spec 0025). A per-org, nestable list: articles belong to a
+// category, and the CMS + reader group by it. `parent_id` is a LOGICAL self-reference (not a DB
+// foreign key) so category management is simple and the migration stays a plain CREATE TABLE;
+// orgDb().help enforces that a parent and an article's category live in the same org, and
+// re-parents children to null on delete. Additive leaf table (no parent rebuild, gotcha #9).
+export const helpCategories = sqliteTable(
+  "help_category",
+  {
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    parentId: text("parent_id"), // -> help_category.id (same org), or null for a top-level category
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("help_category_org_parent_idx").on(t.orgId, t.parentId, t.sortOrder)],
 );

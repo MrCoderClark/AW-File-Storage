@@ -3,6 +3,7 @@ import {
   count,
   desc,
   eq,
+  getTableColumns,
   gte,
   inArray,
   isNull,
@@ -19,6 +20,7 @@ import {
   files,
   fileVersions,
   helpArticles,
+  helpCategories,
   helpImages,
   member,
   orgO365,
@@ -58,6 +60,7 @@ type NewUploadSession = Omit<typeof uploadSessions.$inferInsert, "orgId">;
 type NewAuditEvent = Omit<typeof auditEvents.$inferInsert, "orgId">;
 type NewHelpArticle = Omit<typeof helpArticles.$inferInsert, "orgId">;
 type NewHelpImage = Omit<typeof helpImages.$inferInsert, "orgId">;
+type NewHelpCategory = Omit<typeof helpCategories.$inferInsert, "orgId">;
 
 /**
  * The ONLY way feature code reaches tenant data. Every method here constrains
@@ -619,45 +622,92 @@ export function orgDb(orgId: string, db: Db = getDb()) {
   // NOTE: this breaks the "every method constrains to orgId" claim in the file header comment
   // above; these two reads are the sanctioned exception.
   const help = {
-    /** Reader feed (spec 0024 AC-4): this org's published articles, plus every org's shared
-     * published articles. The one cross-org read for articles. */
-    async listForReader() {
+    /** Reader feed (spec 0024 AC-4, spec 0025 audience): this org's published articles plus
+     * every org's shared published articles. The one cross-org read for articles. When the
+     * viewer is NOT an admin/owner, `admins`-audience articles are excluded server-side. */
+    async listForReader({ viewerIsAdmin = false }: { viewerIsAdmin?: boolean } = {}) {
       return db
         .select({
           id: helpArticles.id,
           title: helpArticles.title,
-          category: helpArticles.category,
+          // Resolve the effective category: the joined category name when the article
+          // points at one (its category may live in another org for a shared article, so
+          // the join is on id alone), else the deprecated free-text `category`.
+          category: sql<string>`coalesce(${helpCategories.name}, ${helpArticles.category})`,
+          categoryId: helpArticles.categoryId,
           excerpt: helpArticles.excerpt,
           pageKey: helpArticles.pageKey,
+          audience: helpArticles.audience,
+          sortOrder: helpArticles.sortOrder,
           updatedAt: helpArticles.updatedAt,
         })
         .from(helpArticles)
+        .leftJoin(
+          helpCategories,
+          eq(helpCategories.id, helpArticles.categoryId),
+        )
         .where(
           and(
             eq(helpArticles.status, "published"),
             or(eq(helpArticles.orgId, orgId), eq(helpArticles.shared, true)),
+            viewerIsAdmin ? undefined : eq(helpArticles.audience, "all"),
           ),
         )
         .orderBy(
-          helpArticles.category,
           helpArticles.sortOrder,
           helpArticles.title,
         );
     },
-    /** One published article a reader in this org may see (own or shared), by id. */
-    async getForReader(articleId: string) {
+    /** One published article a reader in this org may see (own or shared), by id. An
+     * `admins`-audience article is withheld from a non-admin viewer (spec 0025). */
+    async getForReader(articleId: string, viewerIsAdmin = false) {
       const rows = await db
-        .select()
+        .select({
+          ...getTableColumns(helpArticles),
+          // Effective category name (joined by id, cross-org safe for shared articles),
+          // falling back to the deprecated free-text `category`.
+          category: sql<string>`coalesce(${helpCategories.name}, ${helpArticles.category})`,
+        })
         .from(helpArticles)
+        .leftJoin(
+          helpCategories,
+          eq(helpCategories.id, helpArticles.categoryId),
+        )
         .where(
           and(
             eq(helpArticles.id, articleId),
             eq(helpArticles.status, "published"),
             or(eq(helpArticles.orgId, orgId), eq(helpArticles.shared, true)),
+            viewerIsAdmin ? undefined : eq(helpArticles.audience, "all"),
           ),
         )
         .limit(1);
       return rows[0];
+    },
+    /** Resolve related-article ids to reader-visible `{ id, title, category }` (spec 0025 AC-5).
+     * Reuses the reader visibility union (published, own-or-shared, audience-gated) so dangling
+     * or not-visible ids simply drop out. Order is restored to `ids` by the caller. */
+    async listRelatedForReader(ids: string[], viewerIsAdmin = false) {
+      if (ids.length === 0) return [];
+      return db
+        .select({
+          id: helpArticles.id,
+          title: helpArticles.title,
+          category: sql<string>`coalesce(${helpCategories.name}, ${helpArticles.category})`,
+        })
+        .from(helpArticles)
+        .leftJoin(
+          helpCategories,
+          eq(helpCategories.id, helpArticles.categoryId),
+        )
+        .where(
+          and(
+            inArray(helpArticles.id, ids),
+            eq(helpArticles.status, "published"),
+            or(eq(helpArticles.orgId, orgId), eq(helpArticles.shared, true)),
+            viewerIsAdmin ? undefined : eq(helpArticles.audience, "all"),
+          ),
+        );
     },
     /** Admin list of THIS org's own articles, any status (for the editor, slice 2). */
     async listOwn() {
@@ -743,6 +793,68 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         )
         .limit(1);
       return shared ? img : undefined;
+    },
+    // --- Categories (spec 0025): a per-org, nestable list. All org-scoped. ---
+    async listCategories() {
+      return db
+        .select()
+        .from(helpCategories)
+        .where(eq(helpCategories.orgId, orgId))
+        .orderBy(helpCategories.sortOrder, helpCategories.name);
+    },
+    async getCategory(categoryId: string) {
+      const rows = await db
+        .select()
+        .from(helpCategories)
+        .where(
+          and(eq(helpCategories.orgId, orgId), eq(helpCategories.id, categoryId)),
+        )
+        .limit(1);
+      return rows[0];
+    },
+    async createCategory(data: NewHelpCategory) {
+      const rows = await db
+        .insert(helpCategories)
+        .values({ ...data, orgId })
+        .returning();
+      return rows[0];
+    },
+    async updateCategory(categoryId: string, patch: Partial<NewHelpCategory>) {
+      const rows = await db
+        .update(helpCategories)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(
+          and(eq(helpCategories.orgId, orgId), eq(helpCategories.id, categoryId)),
+        )
+        .returning();
+      return rows[0];
+    },
+    /** Delete a category: reparent its children to top-level and clear it off any article
+     * first (both org-scoped), so no article or child points at a gone category. */
+    async removeCategory(categoryId: string) {
+      await db
+        .update(helpCategories)
+        .set({ parentId: null })
+        .where(
+          and(
+            eq(helpCategories.orgId, orgId),
+            eq(helpCategories.parentId, categoryId),
+          ),
+        );
+      await db
+        .update(helpArticles)
+        .set({ categoryId: null })
+        .where(
+          and(
+            eq(helpArticles.orgId, orgId),
+            eq(helpArticles.categoryId, categoryId),
+          ),
+        );
+      await db
+        .delete(helpCategories)
+        .where(
+          and(eq(helpCategories.orgId, orgId), eq(helpCategories.id, categoryId)),
+        );
     },
   };
 

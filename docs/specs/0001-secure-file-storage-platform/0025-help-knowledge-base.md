@@ -1,7 +1,7 @@
 # 0025. Help knowledge base — dedicated CMS shell, categories, tags, featured images, related, audience
 
 **Date**: 2026-09-08
-**Status**: Proposed
+**Status**: Built (see [0025-verify.md](0025-verify.md)) — pending in-browser UI confirmation
 
 Extends [0024](0024-help-documentation-cms.md).
 

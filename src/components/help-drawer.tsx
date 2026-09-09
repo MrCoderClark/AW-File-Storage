@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 // The header help launcher (spec 0024): a "?" button that opens a slide-over Help drawer.
@@ -53,20 +53,31 @@ export function HelpLauncher() {
 function HelpDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
-  const [loaded, setLoaded] = useState(false);
   const [articles, setArticles] = useState<Article[] | null>(null);
   const [error, setError] = useState(false);
   const [q, setQ] = useState("");
   const pageKey = pageKeyFromPath(pathname ?? "");
+  // Refs, not state, so starting the fetch never re-runs the effect (which would tear it
+  // down mid-flight and lose the result). `started` guards against a second fetch; `alive`
+  // flips only on real unmount, so closing the drawer never cancels an in-flight load.
+  const started = useRef(false);
+  const alive = useRef(true);
 
   // Portal target only exists in the browser.
   useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    // Set on (re)mount and clear on unmount. StrictMode dev-mounts twice, so restoring
+    // this to true on the second mount is required or the fetch's result gets dropped.
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   // Lazy-load the feed the first time the drawer is opened.
   useEffect(() => {
-    if (!open || loaded) return;
-    setLoaded(true);
-    let alive = true;
+    if (!open || started.current) return;
+    started.current = true;
     fetch("/api/help", { cache: "no-store" })
       .then((r) =>
         r.ok
@@ -74,15 +85,15 @@ function HelpDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
           : Promise.reject(new Error()),
       )
       .then((b) => {
-        if (alive) setArticles(b.articles ?? []);
+        if (alive.current) setArticles(b.articles ?? []);
       })
       .catch(() => {
-        if (alive) setError(true);
+        if (alive.current) {
+          setError(true);
+          started.current = false; // allow a retry the next time it opens
+        }
       });
-    return () => {
-      alive = false;
-    };
-  }, [open, loaded]);
+  }, [open]);
 
   // Esc closes, only while open.
   useEffect(() => {
