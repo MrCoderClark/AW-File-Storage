@@ -408,3 +408,119 @@ export const accountLock = sqliteTable("account_lock", {
   lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
   lockLevel: integer("lock_level").notNull().default(0),
 });
+
+// In-app help & documentation CMS (spec 0024). Per-org articles authored by an org's
+// owner/admin; the platform owner additionally authors global content in their OWN org and
+// flags it `shared` so it shows in every org. Readers see own-org published PLUS shared
+// published (the one cross-org read, in orgDb().help.listForReader). `body_html` is
+// sanitized before store. Reader routes by `id`, so `slug` is cosmetic and needs no
+// cross-org uniqueness. Additive leaf tables — a create-only migration, no parent rebuild
+// (gotcha #9).
+export const helpArticles = sqliteTable(
+  "help_article",
+  {
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    slug: text("slug").notNull(), // cosmetic label; the reader routes by id
+    category: text("category").notNull().default("General"),
+    bodyHtml: text("body_html").notNull().default(""), // sanitized on save (help-sanitize.ts)
+    excerpt: text("excerpt"),
+    // Contextual help: matches a stable per-route key so the drawer can show
+    // "for this page" articles. Null = not tied to a page.
+    pageKey: text("page_key"),
+    status: text("status", { enum: ["draft", "published"] })
+      .notNull()
+      .default("draft"),
+    // Platform-owner-only flag (set from their own org): makes the article visible to every
+    // org's readers. Never a cross-org write; only a cross-org read (listForReader).
+    shared: integer("shared", { mode: "boolean" }).notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    // Knowledge base fields (spec 0025). `category_id`/`featured_image_id` are LOGICAL
+    // references (not DB foreign keys) so these stay pure additive ADD COLUMNs with no
+    // help_article rebuild on D1 (gotcha #9); the relationships are enforced in orgDb().help.
+    categoryId: text("category_id"), // -> help_category.id (same org), or null
+    tags: text("tags").notNull().default("[]"), // JSON string array
+    featuredImageId: text("featured_image_id"), // -> help_image.id, or null
+    relatedIds: text("related_ids").notNull().default("[]"), // JSON array of same-org article ids
+    // Who may read a published article: 'all' signed-in staff, or 'admins' only (spec 0025).
+    // Enforced in the reader queries by the caller's role. Independent of `shared` (cross-org).
+    audience: text("audience", { enum: ["all", "admins"] }).notNull().default("all"),
+    // Reader engagement counters (spec 0026 polish), own-org only. Additive, default 0.
+    viewCount: integer("view_count").notNull().default(0),
+    helpfulCount: integer("helpful_count").notNull().default(0),
+    unhelpfulCount: integer("unhelpful_count").notNull().default(0),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    updatedBy: text("updated_by").references(() => user.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("help_article_org_status_cat_idx").on(
+      t.orgId,
+      t.status,
+      t.category,
+      t.sortOrder,
+    ),
+    index("help_article_org_pagekey_idx").on(t.orgId, t.pageKey),
+    // Serves the cross-org shared read (spec 0024). Intentionally does NOT lead with org_id
+    // (the one documented exception to the org_id-leading index rule).
+    index("help_article_shared_status_idx").on(t.shared, t.status),
+    check("help_article_status_ck", sql`${t.status} in ('draft','published')`),
+  ],
+);
+
+// Images embedded in help articles (spec 0024). Stored in the PRIVATE R2 bucket and served
+// through an authorized route (own-org, or referenced by a published+shared article), never
+// publicly enumerable. `article_id` is nullable until the article is first saved, then set
+// so the serve route can authorize and orphans can be swept.
+export const helpImages = sqliteTable(
+  "help_image",
+  {
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    articleId: text("article_id").references(() => helpArticles.id, {
+      onDelete: "cascade",
+    }),
+    r2Key: text("r2_key").notNull(),
+    contentType: text("content_type").notNull(),
+    uploadedBy: text("uploaded_by").references(() => user.id),
+    // Media library fields (spec 0026), all additive + nullable (no rebuild — gotcha #9).
+    // New uploads are library-owned (article_id null) and reused by reference scan.
+    filename: text("filename"), // editable display name; original file name on upload
+    title: text("title"), // optional human title (media library details, spec 0026)
+    caption: text("caption"), // optional caption (media library details, spec 0026)
+    altText: text("alt_text"), // applied to the img alt on insert + featured image
+    width: integer("width"), // intrinsic pixels after client downscale
+    height: integer("height"),
+    sizeBytes: integer("size_bytes"), // final stored byte size, for the library display
+    createdAt: createdAt(),
+  },
+  (t) => [index("help_image_org_article_idx").on(t.orgId, t.articleId)],
+);
+
+// Help knowledge-base categories (spec 0025). A per-org, nestable list: articles belong to a
+// category, and the CMS + reader group by it. `parent_id` is a LOGICAL self-reference (not a DB
+// foreign key) so category management is simple and the migration stays a plain CREATE TABLE;
+// orgDb().help enforces that a parent and an article's category live in the same org, and
+// re-parents children to null on delete. Additive leaf table (no parent rebuild, gotcha #9).
+export const helpCategories = sqliteTable(
+  "help_category",
+  {
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    parentId: text("parent_id"), // -> help_category.id (same org), or null for a top-level category
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("help_category_org_parent_idx").on(t.orgId, t.parentId, t.sortOrder)],
+);

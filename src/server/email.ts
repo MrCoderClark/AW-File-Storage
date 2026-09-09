@@ -16,6 +16,8 @@ export interface EmailMessage {
   to: string;
   subject: string;
   html: string;
+  /** Optional Reply-To (e.g. the requester on a support message), so a reply reaches them. */
+  replyTo?: string;
 }
 
 export async function sendEmail(
@@ -40,6 +42,7 @@ export async function sendEmail(
       to: msg.to,
       subject: msg.subject,
       html: msg.html,
+      ...(msg.replyTo ? { reply_to: msg.replyTo } : {}),
     }),
   });
 
@@ -68,6 +71,38 @@ export function linkEmail(
           <p style="margin:18px 0 14px 0;font-size:14px;color:${BRAND.muted};">Or paste this link into your browser:<br><a href="${escapeHtml(url)}" style="color:${BRAND.link};word-break:break-all;">${escapeHtml(url)}</a></p>
           <p style="margin:0;">If you did not request this, you can safely ignore this email.</p>`;
   return emailShell({ preheader: intro, contentHtml: content });
+}
+
+
+/**
+ * A support request raised from the in-app "Contact support" form (spec 0025 follow-up).
+ * Sent to the support inbox with the requester as Reply-To; the body carries who asked, from
+ * which org, and their message. Every interpolated value is HTML-escaped.
+ */
+export function supportRequestEmail(opts: {
+  fromName?: string | null;
+  fromEmail: string;
+  orgId: string;
+  subject: string;
+  message: string;
+}): string {
+  const who = opts.fromName?.trim()
+    ? `${escapeHtml(opts.fromName)} &lt;${escapeHtml(opts.fromEmail)}&gt;`
+    : escapeHtml(opts.fromEmail);
+  const body = escapeHtml(opts.message).replace(/\r?\n/g, "<br>");
+  const content = `          <p style="margin:0 0 14px 0;font-weight:700;">New support request</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px 0;font-size:14px;color:${BRAND.muted};">
+            <tr><td style="padding:2px 12px 2px 0;">From</td><td style="color:${BRAND.text};">${who}</td></tr>
+            <tr><td style="padding:2px 12px 2px 0;">Organization</td><td style="color:${BRAND.text};">${escapeHtml(opts.orgId)}</td></tr>
+            <tr><td style="padding:2px 12px 2px 0;">Subject</td><td style="color:${BRAND.text};">${escapeHtml(opts.subject)}</td></tr>
+          </table>
+          <div style="padding:14px 16px;background-color:${BRAND.canvas};border:1px solid ${BRAND.border};border-radius:8px;font-size:15px;line-height:23px;color:${BRAND.text};">${body}</div>
+          <p style="margin:16px 0 0 0;font-size:14px;color:${BRAND.muted};">Reply directly to this email to respond to ${escapeHtml(opts.fromEmail)}.</p>`;
+  return emailShell({
+    preheader: `Support request: ${opts.subject}`,
+    contentHtml: content,
+    footerNote: "Sent from the AW File Storage in-app Contact support form.",
+  });
 }
 
 
