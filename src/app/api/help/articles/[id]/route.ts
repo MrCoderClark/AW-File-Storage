@@ -25,6 +25,11 @@ export async function PATCH(
     title?: string;
     slug?: string;
     category?: string;
+    categoryId?: string | null;
+    tags?: string[];
+    featuredImageId?: string | null;
+    relatedIds?: string[];
+    audience?: string;
     bodyHtml?: string;
     excerpt?: string;
     pageKey?: string;
@@ -48,6 +53,21 @@ export async function PATCH(
   }
   if (body.slug !== undefined) patch.slug = body.slug.trim() || existing.slug;
   if (body.category !== undefined) patch.category = body.category.trim() || "General";
+  if (body.categoryId !== undefined) patch.categoryId = body.categoryId?.trim() || null;
+  if (body.tags !== undefined) {
+    patch.tags = JSON.stringify(Array.isArray(body.tags) ? body.tags : []);
+  }
+  if (body.featuredImageId !== undefined) {
+    patch.featuredImageId = body.featuredImageId?.trim() || null;
+  }
+  if (body.relatedIds !== undefined) {
+    patch.relatedIds = JSON.stringify(
+      Array.isArray(body.relatedIds) ? body.relatedIds : [],
+    );
+  }
+  if (body.audience !== undefined) {
+    patch.audience = body.audience === "admins" ? "admins" : "all";
+  }
   if (body.excerpt !== undefined) patch.excerpt = body.excerpt.trim() || null;
   if (body.pageKey !== undefined) patch.pageKey = body.pageKey.trim() || null;
   if (body.sortOrder !== undefined) patch.sortOrder = body.sortOrder;

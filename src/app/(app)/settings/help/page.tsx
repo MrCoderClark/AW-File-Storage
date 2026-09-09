@@ -1,11 +1,7 @@
-import { HelpAdminSection } from "@/components/help-admin";
-import { requireOrgRole } from "@/server/session";
+import { redirect } from "next/navigation";
 
-// The help-article editor (spec 0024, slice 2b). Owner/admin only; the platform owner also
-// gets the "share to all orgs" control (the section reads `canShare` from the API).
-export const dynamic = "force-dynamic";
-
-export default async function HelpSettingsPage() {
-  await requireOrgRole("admin"); // members get a 404 here
-  return <HelpAdminSection />;
+// Authoring moved out of Settings into the dedicated Knowledge base area (spec 0025).
+// Keep this path working by redirecting anyone (or an old bookmark) to /kb.
+export default function HelpSettingsRedirect() {
+  redirect("/kb");
 }
