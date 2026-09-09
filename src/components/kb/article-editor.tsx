@@ -7,6 +7,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { HELP_PAGE_KEYS } from "@/lib/help-page-keys";
 
 // The Knowledge base article editor (spec 0025). Two columns: title + WYSIWYG body on the left,
 // an "Article details" rail on the right (category, tags, audience, featured image, related,
@@ -451,13 +452,23 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
                   className="input"
                 />
               </Field>
-              <Field label="Page key">
-                <input
+              <Field label="Show on page">
+                <select
                   value={pageKey}
                   onChange={(e) => setPageKey(e.target.value)}
                   className="input"
-                  placeholder="files…"
-                />
+                >
+                  <option value="">General (all pages)</option>
+                  {HELP_PAGE_KEYS.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}
+                    </option>
+                  ))}
+                  {/* Preserve a legacy free-text key that isn't a known route. */}
+                  {pageKey && !HELP_PAGE_KEYS.some((p) => p.key === pageKey) && (
+                    <option value={pageKey}>{pageKey}</option>
+                  )}
+                </select>
               </Field>
             </div>
             {canShare && (

@@ -4,17 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ContactSupport } from "@/components/contact-support";
 
 // The header help launcher (spec 0024): a "?" button that opens a slide-over Help drawer.
 // The drawer loads the reader feed (GET /api/help), offers search, a "For this page"
 // contextual list, a browse-by-category list, a link to the full /help page, and a
-// contact-support mailto. Reading only; authoring lives in Settings (slice 2).
+// contact-support form (a modal that emails support). Reading only; authoring lives in the KB.
 //
 // The panel stays mounted and animates open/closed (slide + backdrop fade) so it never
 // flashes; a global prefers-reduced-motion rule neutralises the motion for those who ask.
-
-// Placeholder support address (spec 0024 follow-up: set the real one).
-const SUPPORT_EMAIL = "support@americaworks.com";
 
 interface Article {
   id: string;
@@ -222,12 +220,9 @@ function HelpDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
           >
             Open full help →
           </Link>
-          <a
-            href={`mailto:${SUPPORT_EMAIL}`}
-            className="mt-1 block rounded-[--radius-panel] px-2 py-1.5 text-slate-700 hover:bg-canvas"
-          >
+          <ContactSupport className="mt-1 block w-full rounded-[--radius-panel] px-2 py-1.5 text-left text-slate-700 hover:bg-canvas">
             Contact support
-          </a>
+          </ContactSupport>
         </footer>
       </aside>
     </div>,
