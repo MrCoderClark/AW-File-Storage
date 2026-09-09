@@ -14,6 +14,9 @@ interface Article {
   status: "draft" | "published";
   audience: "all" | "admins";
   shared: boolean;
+  viewCount?: number;
+  helpfulCount?: number;
+  unhelpfulCount?: number;
 }
 interface Category {
   id: string;
@@ -92,6 +95,7 @@ export function ArticleList() {
                 <th className="px-4 py-2.5 font-medium">Title</th>
                 <th className="px-4 py-2.5 font-medium">Category</th>
                 <th className="px-4 py-2.5 font-medium">Audience</th>
+                <th className="px-4 py-2.5 font-medium">Engagement</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
               </tr>
             </thead>
@@ -116,6 +120,14 @@ export function ArticleList() {
                   </td>
                   <td className="px-4 py-3 text-muted-500">
                     {a.audience === "admins" ? "Admins only" : "All members"}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-500">
+                    <span title="Views">{a.viewCount ?? 0} views</span>
+                    {((a.helpfulCount ?? 0) > 0 || (a.unhelpfulCount ?? 0) > 0) && (
+                      <span className="ml-2" title="Helpful / not helpful">
+                        👍 {a.helpfulCount ?? 0} · 👎 {a.unhelpfulCount ?? 0}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={a.status} />

@@ -2,6 +2,9 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { HelpArticleBody } from "@/components/help-article-body";
+import { HelpFeedback } from "@/components/help-feedback";
+import { HelpToc } from "@/components/help-toc";
+import { buildHelpToc } from "@/lib/help-toc";
 import { sanitizeHelpHtml } from "@/server/help-sanitize";
 import { orgDbFor } from "@/server/org-db";
 import { getActor } from "@/server/session";
@@ -46,7 +49,7 @@ export default async function HelpArticlePage({
   const article = await scoped.help.getForReader(id, actor.canManageAny);
   if (!article) notFound();
 
-  const safe = sanitizeHelpHtml(article.bodyHtml);
+  const { html: safe, toc } = buildHelpToc(sanitizeHelpHtml(article.bodyHtml));
   const published = fmtDate(article.publishedAt);
   const updated = fmtDate(article.updatedAt);
   const tags = parseJsonArray(article.tags);
@@ -106,10 +109,17 @@ export default async function HelpArticlePage({
         </div>
 
         <HelpArticleBody html={safe} />
+
+        <HelpFeedback articleId={article.id} />
       </article>
 
       {/* Details rail */}
       <aside className="w-full shrink-0 space-y-4 lg:w-64">
+        {toc.length >= 2 && (
+          <div className="rounded-[--radius-panel] border border-border bg-surface p-4 lg:sticky lg:top-6">
+            <HelpToc items={toc} />
+          </div>
+        )}
         <div className="rounded-[--radius-panel] border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-slate-800">Article details</h2>
           <dl className="mt-3 space-y-3 text-sm">

@@ -60,6 +60,16 @@ type NewUploadSession = Omit<typeof uploadSessions.$inferInsert, "orgId">;
 type NewAuditEvent = Omit<typeof auditEvents.$inferInsert, "orgId">;
 type NewHelpArticle = Omit<typeof helpArticles.$inferInsert, "orgId">;
 type NewHelpImage = Omit<typeof helpImages.$inferInsert, "orgId">;
+
+/** Strip HTML to plain, whitespace-collapsed text for the reader search index (spec 0026). */
+function htmlToSearchText(html: string | null | undefined): string {
+  if (!html) return "";
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&[a-z]+;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 type NewHelpCategory = Omit<typeof helpCategories.$inferInsert, "orgId">;
 
 /**
@@ -626,7 +636,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
      * every org's shared published articles. The one cross-org read for articles. When the
      * viewer is NOT an admin/owner, `admins`-audience articles are excluded server-side. */
     async listForReader({ viewerIsAdmin = false }: { viewerIsAdmin?: boolean } = {}) {
-      return db
+      const rows = await db
         .select({
           id: helpArticles.id,
           title: helpArticles.title,
@@ -640,6 +650,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
           audience: helpArticles.audience,
           sortOrder: helpArticles.sortOrder,
           updatedAt: helpArticles.updatedAt,
+          bodyHtml: helpArticles.bodyHtml,
         })
         .from(helpArticles)
         .leftJoin(
@@ -653,10 +664,13 @@ export function orgDb(orgId: string, db: Db = getDb()) {
             viewerIsAdmin ? undefined : eq(helpArticles.audience, "all"),
           ),
         )
-        .orderBy(
-          helpArticles.sortOrder,
-          helpArticles.title,
-        );
+        .orderBy(helpArticles.sortOrder, helpArticles.title);
+      // Include a stripped, capped plain-text of the body so the drawer / /help search can match
+      // article content, not just titles (spec 0026 polish). The raw HTML is not returned.
+      return rows.map(({ bodyHtml, ...r }) => ({
+        ...r,
+        searchText: htmlToSearchText(bodyHtml).slice(0, 2000),
+      }));
     },
     /** One published article a reader in this org may see (own or shared), by id. An
      * `admins`-audience article is withheld from a non-admin viewer (spec 0025). */
@@ -706,6 +720,35 @@ export function orgDb(orgId: string, db: Db = getDb()) {
             eq(helpArticles.status, "published"),
             or(eq(helpArticles.orgId, orgId), eq(helpArticles.shared, true)),
             viewerIsAdmin ? undefined : eq(helpArticles.audience, "all"),
+          ),
+        );
+    },
+    /** Count a view of one of THIS org's published articles (spec 0026 polish). Org-scoped, so a
+     * shared article viewed in another org is not counted (writes stay own-org). */
+    async incrementView(articleId: string) {
+      await db
+        .update(helpArticles)
+        .set({ viewCount: sql`${helpArticles.viewCount} + 1` })
+        .where(
+          and(
+            eq(helpArticles.orgId, orgId),
+            eq(helpArticles.id, articleId),
+            eq(helpArticles.status, "published"),
+          ),
+        );
+    },
+    /** Record a helpful / not-helpful vote on one of THIS org's published articles (spec 0026).
+     * Org-scoped (a shared article's votes count only in its owning org). */
+    async recordFeedback(articleId: string, helpful: boolean) {
+      const col = helpful ? helpArticles.helpfulCount : helpArticles.unhelpfulCount;
+      await db
+        .update(helpArticles)
+        .set({ [helpful ? "helpfulCount" : "unhelpfulCount"]: sql`${col} + 1` })
+        .where(
+          and(
+            eq(helpArticles.orgId, orgId),
+            eq(helpArticles.id, articleId),
+            eq(helpArticles.status, "published"),
           ),
         );
     },
@@ -793,6 +836,100 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         )
         .limit(1);
       return shared ? img : undefined;
+    },
+    // --- Media library (spec 0026): this org's uploaded images, reused by reference. ---
+    /** The org's articles reduced to what an image reference scan needs: id, title, the body
+     * HTML (an image's serve URL / id appears in it), and the featured image id. */
+    async _articleImageRefs() {
+      return db
+        .select({
+          id: helpArticles.id,
+          title: helpArticles.title,
+          bodyHtml: helpArticles.bodyHtml,
+          featuredImageId: helpArticles.featuredImageId,
+        })
+        .from(helpArticles)
+        .where(eq(helpArticles.orgId, orgId));
+    },
+    /** This org's articles that reference `imageId` — in a body (its id/serve URL appears in the
+     * HTML) or as the featured image. Backs the Used/Unused badge and the delete guard. */
+    async referencingArticles(imageId: string) {
+      const arts = await this._articleImageRefs();
+      return arts
+        .filter(
+          (a) =>
+            a.featuredImageId === imageId ||
+            (a.bodyHtml?.includes(imageId) ?? false),
+        )
+        .map((a) => ({ id: a.id, title: a.title }));
+    },
+    /** The org's image library, newest first, each annotated `inUse` (referenced by any of the
+     * org's articles). Two queries: the images, and the article refs to scan against. */
+    async listImages() {
+      const [imgs, arts] = await Promise.all([
+        db
+          .select({
+            id: helpImages.id,
+            filename: helpImages.filename,
+            title: helpImages.title,
+            caption: helpImages.caption,
+            contentType: helpImages.contentType,
+            width: helpImages.width,
+            height: helpImages.height,
+            sizeBytes: helpImages.sizeBytes,
+            altText: helpImages.altText,
+            createdAt: helpImages.createdAt,
+          })
+          .from(helpImages)
+          .where(eq(helpImages.orgId, orgId))
+          .orderBy(desc(helpImages.createdAt)),
+        this._articleImageRefs(),
+      ]);
+      return imgs.map((img) => {
+        // The articles that reference this image (featured or in-body), for the details rail.
+        const usedBy = arts
+          .filter(
+            (a) =>
+              a.featuredImageId === img.id ||
+              (a.bodyHtml?.includes(img.id) ?? false),
+          )
+          .map((a) => ({ id: a.id, title: a.title }));
+        return { ...img, inUse: usedBy.length > 0, usedBy };
+      });
+    },
+    /** One of this org's images by id (org-scoped), or undefined. For the delete route to read
+     * the r2 key before removing the object. */
+    async getImage(imageId: string) {
+      const rows = await db
+        .select()
+        .from(helpImages)
+        .where(and(eq(helpImages.orgId, orgId), eq(helpImages.id, imageId)))
+        .limit(1);
+      return rows[0];
+    },
+    /** Edit an image's name, title, caption, or alt text (org-scoped). */
+    async updateImage(
+      imageId: string,
+      patch: {
+        filename?: string;
+        title?: string | null;
+        caption?: string | null;
+        altText?: string | null;
+      },
+    ) {
+      const rows = await db
+        .update(helpImages)
+        .set(patch)
+        .where(and(eq(helpImages.orgId, orgId), eq(helpImages.id, imageId)))
+        .returning();
+      return rows[0];
+    },
+    /** Delete an image row (org-scoped). The caller removes the R2 object and must have already
+     * confirmed the image is not in use (see `referencingArticles`). */
+    async removeImage(imageId: string) {
+      await db
+        .delete(helpImages)
+        .where(and(eq(helpImages.orgId, orgId), eq(helpImages.id, imageId)));
     },
     // --- Categories (spec 0025): a per-org, nestable list. All org-scoped. ---
     async listCategories() {

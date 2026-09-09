@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { Logo } from "@/components/logo";
+import { signOut } from "@/lib/auth-client";
 
 // The Knowledge base CMS shell (spec 0025): a dark left sidebar (nav + the live category tree)
 // and a light main area, distinct from the app's top-nav shell. Admin/owner only (the layout
@@ -19,10 +20,12 @@ interface Category {
 const NAV = [
   { href: "/kb/articles", label: "Articles" },
   { href: "/kb/categories", label: "Categories" },
+  { href: "/kb/media", label: "Media" },
 ];
 
 export function KbShell({
   userName,
+  userEmail,
   orgName,
   children,
 }: {
@@ -32,8 +35,26 @@ export function KbShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [cats, setCats] = useState<Category[]>([]);
   const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  async function onSignOut() {
+    await signOut();
+    router.push("/sign-in");
+  }
 
   useEffect(() => {
     fetch("/api/help/categories", { cache: "no-store" })
@@ -146,9 +167,51 @@ export function KbShell({
             ☰
           </button>
           <div className="flex-1" />
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">
-            {initials || "?"}
-          </span>
+          <div ref={menuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="flex items-center gap-2 rounded-[--radius-panel] p-1 hover:bg-canvas"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">
+                {initials || "?"}
+              </span>
+              <span className="hidden text-left leading-tight sm:block">
+                <span className="block text-sm font-medium text-slate-800">
+                  {userName}
+                </span>
+              </span>
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-[--radius-panel] border border-border bg-surface shadow-lg"
+              >
+                <div className="border-b border-border px-4 py-3">
+                  <div className="text-sm font-medium text-slate-800">{userName}</div>
+                  <div className="truncate text-xs text-muted-500">{userEmail}</div>
+                </div>
+                <Link
+                  href="/dashboard"
+                  role="menuitem"
+                  onClick={() => setMenuOpen(false)}
+                  className="block w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-canvas"
+                >
+                  ← Back to app
+                </Link>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={onSignOut}
+                  className="block w-full border-t border-border px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-canvas"
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
+          </div>
         </header>
         <main className="flex-1 p-6">{children}</main>
       </div>

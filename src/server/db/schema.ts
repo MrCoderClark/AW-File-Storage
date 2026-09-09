@@ -448,6 +448,10 @@ export const helpArticles = sqliteTable(
     // Who may read a published article: 'all' signed-in staff, or 'admins' only (spec 0025).
     // Enforced in the reader queries by the caller's role. Independent of `shared` (cross-org).
     audience: text("audience", { enum: ["all", "admins"] }).notNull().default("all"),
+    // Reader engagement counters (spec 0026 polish), own-org only. Additive, default 0.
+    viewCount: integer("view_count").notNull().default(0),
+    helpfulCount: integer("helpful_count").notNull().default(0),
+    unhelpfulCount: integer("unhelpful_count").notNull().default(0),
     publishedAt: integer("published_at", { mode: "timestamp_ms" }),
     updatedBy: text("updated_by").references(() => user.id),
     createdAt: createdAt(),
@@ -485,6 +489,15 @@ export const helpImages = sqliteTable(
     r2Key: text("r2_key").notNull(),
     contentType: text("content_type").notNull(),
     uploadedBy: text("uploaded_by").references(() => user.id),
+    // Media library fields (spec 0026), all additive + nullable (no rebuild — gotcha #9).
+    // New uploads are library-owned (article_id null) and reused by reference scan.
+    filename: text("filename"), // editable display name; original file name on upload
+    title: text("title"), // optional human title (media library details, spec 0026)
+    caption: text("caption"), // optional caption (media library details, spec 0026)
+    altText: text("alt_text"), // applied to the img alt on insert + featured image
+    width: integer("width"), // intrinsic pixels after client downscale
+    height: integer("height"),
+    sizeBytes: integer("size_bytes"), // final stored byte size, for the library display
     createdAt: createdAt(),
   },
   (t) => [index("help_image_org_article_idx").on(t.orgId, t.articleId)],

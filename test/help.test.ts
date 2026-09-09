@@ -192,3 +192,93 @@ describe("help knowledge base (spec 0025)", () => {
     ).toBe("Billing");
   });
 });
+
+describe("help media library (spec 0026)", () => {
+  it("AC-1: listImages is org-scoped and flags in-use images", async () => {
+    // org A references img-a in an article body; add an orphan too.
+    await orgDb("org-a", db).help.update("a-pub", {
+      bodyHtml: '<p><img src="/api/help/images/img-a"></p>',
+    });
+    await orgDb("org-a", db).help.createImage({
+      id: "img-a-orphan",
+      r2Key: "help/org-a/orphan.png",
+      contentType: "image/png",
+    });
+
+    const imgs = await orgDb("org-a", db).help.listImages();
+    const ids = imgs.map((i) => i.id).sort();
+    expect(ids).toEqual(["img-a", "img-a-orphan"]); // never org B's images
+    expect(imgs.find((i) => i.id === "img-a")?.inUse).toBe(true);
+    expect(imgs.find((i) => i.id === "img-a-orphan")?.inUse).toBe(false);
+  });
+
+  it("AC-1: a featured image counts as in use", async () => {
+    await orgDb("org-a", db).help.update("a-pub", { featuredImageId: "img-a" });
+    const imgs = await orgDb("org-a", db).help.listImages();
+    expect(imgs.find((i) => i.id === "img-a")?.inUse).toBe(true);
+  });
+
+  it("AC-6: referencingArticles lists the articles using an image", async () => {
+    await orgDb("org-a", db).help.update("a-pub", {
+      bodyHtml: '<img src="/api/help/images/img-a">',
+    });
+    const using = await orgDb("org-a", db).help.referencingArticles("img-a");
+    expect(using.map((a) => a.id)).toEqual(["a-pub"]);
+    // An orphan has no referencing articles (safe to delete).
+    await orgDb("org-a", db).help.createImage({
+      id: "img-a-orphan",
+      r2Key: "help/org-a/orphan.png",
+      contentType: "image/png",
+    });
+    expect(
+      (await orgDb("org-a", db).help.referencingArticles("img-a-orphan")).length,
+    ).toBe(0);
+  });
+
+  it("AC-4: updateImage renames / sets title, caption, alt, org-scoped", async () => {
+    const updated = await orgDb("org-a", db).help.updateImage("img-a", {
+      filename: "Restart guide.png",
+      title: "Restart guide",
+      caption: "How to restart the services",
+      altText: "A terminal",
+    });
+    expect(updated?.filename).toBe("Restart guide.png");
+    expect(updated?.title).toBe("Restart guide");
+    expect(updated?.caption).toBe("How to restart the services");
+    expect(updated?.altText).toBe("A terminal");
+    // org B cannot touch org A's image.
+    expect(
+      await orgDb("org-b", db).help.updateImage("img-a", { filename: "hijack" }),
+    ).toBeUndefined();
+    expect((await orgDb("org-a", db).help.getImage("img-a"))?.filename).toBe(
+      "Restart guide.png",
+    );
+  });
+
+  it("polish: view + feedback counters increment, org-scoped", async () => {
+    await orgDb("org-a", db).help.incrementView("a-pub");
+    await orgDb("org-a", db).help.incrementView("a-pub");
+    await orgDb("org-a", db).help.recordFeedback("a-pub", true);
+    await orgDb("org-a", db).help.recordFeedback("a-pub", false);
+    const a = await orgDb("org-a", db).help.getOwn("a-pub");
+    expect(a?.viewCount).toBe(2);
+    expect(a?.helpfulCount).toBe(1);
+    expect(a?.unhelpfulCount).toBe(1);
+
+    // Another org can't inflate org A's counters (org-scoped write, no-op).
+    await orgDb("org-b", db).help.incrementView("a-pub");
+    await orgDb("org-b", db).help.recordFeedback("a-pub", true);
+    expect((await orgDb("org-a", db).help.getOwn("a-pub"))?.viewCount).toBe(2);
+    expect((await orgDb("org-a", db).help.getOwn("a-pub"))?.helpfulCount).toBe(1);
+  });
+
+  it("AC-7: getImage / removeImage never cross orgs", async () => {
+    expect(await orgDb("org-b", db).help.getImage("img-a")).toBeUndefined();
+    // A cross-org remove is a no-op (row stays).
+    await orgDb("org-b", db).help.removeImage("img-a");
+    expect((await orgDb("org-a", db).help.getImage("img-a"))?.id).toBe("img-a");
+    // Own-org remove works.
+    await orgDb("org-a", db).help.removeImage("img-a");
+    expect(await orgDb("org-a", db).help.getImage("img-a")).toBeUndefined();
+  });
+});

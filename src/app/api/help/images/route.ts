@@ -4,10 +4,10 @@ import { orgDbFor } from "@/server/org-db";
 import { presignPut } from "@/server/r2";
 import { requireApiRole } from "@/server/session";
 
-// Reserve a help image upload (spec 0024 AC-7). Owner/admin. Returns a presigned PUT to the
-// PRIVATE bucket (bytes go straight to R2, like the file uploader) plus the app-relative serve
-// URL to embed in the article body. The help_image row records the owning org and (optionally)
-// the article; save-time linking (articles route) sets article_id for new articles.
+// Help image uploads + media library (spec 0024 AC-7, spec 0026). Owner/admin, org-scoped.
+// POST reserves a presigned PUT to the PRIVATE bucket (bytes go straight to R2) and creates the
+// help_image row, now recording the media-library metadata (filename, dimensions, size). New
+// uploads are library-owned (article_id null) and reused by reference. GET lists the library.
 export const dynamic = "force-dynamic";
 
 interface Env {
@@ -26,6 +26,21 @@ const EXT: Record<string, string> = {
 };
 const UPLOAD_TTL = 300; // 5 minutes
 
+// The media library for the caller's org: id, name, type, size, dimensions, and whether any
+// article uses it (spec 0026 AC-1).
+export async function GET() {
+  const auth = await requireApiRole("admin");
+  if (!auth.ok) return auth.response;
+  const { env } = getCloudflareContext();
+  const e = env as unknown as Env;
+  const scoped = orgDbFor(auth.actor.orgId, e.DB);
+  const images = await scoped.help.listImages();
+  return Response.json({
+    ok: true,
+    images: images.map((img) => ({ ...img, url: `/api/help/images/${img.id}` })),
+  });
+}
+
 export async function POST(req: Request) {
   const auth = await requireApiRole("admin");
   if (!auth.ok) return auth.response;
@@ -33,6 +48,11 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     contentType?: string;
     articleId?: string;
+    filename?: string;
+    width?: number;
+    height?: number;
+    size?: number;
+    alt?: string;
   };
   const ext = body.contentType ? EXT[body.contentType] : undefined;
   if (!ext) {
@@ -56,10 +76,18 @@ export async function POST(req: Request) {
   const scoped = orgDbFor(auth.actor.orgId, e.DB);
   await scoped.help.createImage({
     id: imageId,
+    // Library-owned by default (spec 0026); a legacy caller may still pass an articleId.
     articleId: body.articleId?.trim() || null,
     r2Key: key,
     contentType: body.contentType as string,
     uploadedBy: auth.actor.userId,
+    filename: body.filename?.trim().slice(0, 200) || null,
+    altText: body.alt?.trim().slice(0, 500) || null,
+    width: Number.isFinite(body.width) ? Math.round(body.width as number) : null,
+    height: Number.isFinite(body.height)
+      ? Math.round(body.height as number)
+      : null,
+    sizeBytes: Number.isFinite(body.size) ? Math.round(body.size as number) : null,
   });
 
   return Response.json({
