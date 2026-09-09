@@ -2,15 +2,13 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { ContactSupport } from "@/components/contact-support";
 
 // The reader's help library browser (spec 0024 AC-3), styled to the knowledge-base mock
 // (docs/Designs/mock-articles-list.png): category tabs, a search box + sort control, a list
 // of article cards, and a right rail with a Categories list and a "Need help?" contact box.
 // Reader-only: every article here is already published and visible to the viewer, so there
 // are no status/audience affordances — those live in the admin editor.
-
-// Placeholder support address (mirrors help-drawer.tsx; spec 0024 follow-up: set the real one).
-const SUPPORT_EMAIL = "support@americaworks.com";
 
 export interface BrowserArticle {
   id: string;
@@ -181,13 +179,10 @@ export function HelpBrowser({ articles }: { articles: BrowserArticle[] }) {
             <p className="mt-1.5 text-sm text-muted-500">
               Can&apos;t find what you&apos;re looking for? Reach out to the support team.
             </p>
-            <a
-              href={`mailto:${SUPPORT_EMAIL}`}
-              className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-accent-500 hover:underline"
-            >
+            <ContactSupport className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-accent-500 hover:underline">
               <MailIcon className="h-4 w-4" />
               Contact support
-            </a>
+            </ContactSupport>
           </div>
         </aside>
       </div>
