@@ -26,6 +26,7 @@ export default async function HelpPage() {
     excerpt: a.excerpt ?? null,
     sortOrder: a.sortOrder ?? 0,
     updatedAt: a.updatedAt ? new Date(a.updatedAt).getTime() : 0,
+    searchText: a.searchText,
   }));
 
   return <HelpBrowser articles={articles} />;

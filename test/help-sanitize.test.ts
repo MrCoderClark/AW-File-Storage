@@ -35,4 +35,20 @@ describe("sanitizeHelpHtml (spec 0024 AC-8)", () => {
     expect(out).toContain("<li>one</li>");
     expect(out).toContain('href="https://x.com"');
   });
+
+  it("keeps image width + a valid data-align, drops a bogus one (spec 0026)", () => {
+    const ok = sanitizeHelpHtml(
+      '<img src="/api/help/images/x" alt="a" width="320" data-align="center">',
+    );
+    expect(ok).toContain('width="320"');
+    expect(ok).toContain('data-align="center"');
+
+    // A bogus value is dropped (js-xss may leave a valueless, inert `data-align`); the point is
+    // no non-enum value survives, so the CSS `[data-align="..."]` selectors never apply it.
+    const bad = sanitizeHelpHtml(
+      '<img src="/api/help/images/x" data-align="javascript:alert(1)">',
+    );
+    expect(bad).not.toMatch(/data-align=/i);
+    expect(bad).not.toMatch(/javascript:/i);
+  });
 });

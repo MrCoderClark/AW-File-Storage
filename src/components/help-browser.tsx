@@ -19,6 +19,8 @@ export interface BrowserArticle {
   sortOrder: number;
   /** Last-updated time as epoch ms (0 when unknown). */
   updatedAt: number;
+  /** Stripped body text so search matches content, not just title/excerpt (spec 0026). */
+  searchText?: string;
 }
 
 // "curated" is the admin-set order (help_article.sort_order) and is the default, so the
@@ -57,7 +59,8 @@ export function HelpBrowser({ articles }: { articles: BrowserArticle[] }) {
       return (
         a.title.toLowerCase().includes(q) ||
         a.excerpt?.toLowerCase().includes(q) ||
-        a.category.toLowerCase().includes(q)
+        a.category.toLowerCase().includes(q) ||
+        (a.searchText ?? "").toLowerCase().includes(q)
       );
     });
     list = [...list].sort((a, b) => {

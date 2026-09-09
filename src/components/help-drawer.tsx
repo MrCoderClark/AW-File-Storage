@@ -20,6 +20,7 @@ interface Article {
   category: string;
   excerpt: string | null;
   pageKey: string | null;
+  searchText?: string;
 }
 
 // A stable per-route key for contextual help, from the first path segment
@@ -113,7 +114,8 @@ function HelpDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
         (a) =>
           a.title.toLowerCase().includes(term) ||
           (a.excerpt ?? "").toLowerCase().includes(term) ||
-          a.category.toLowerCase().includes(term),
+          a.category.toLowerCase().includes(term) ||
+          (a.searchText ?? "").toLowerCase().includes(term),
       )
     : all;
   const contextual = term ? [] : all.filter((a) => a.pageKey === pageKey);

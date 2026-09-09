@@ -36,7 +36,8 @@ const filter = new xss.FilterXSS({
     blockquote: [], pre: [], code: [],
     strong: [], em: [], u: [], s: [], span: [],
     a: ["href", "title", "target", "rel"],
-    img: ["src", "alt", "width", "height"],
+    // `data-align` (spec 0026) is an enum (left/center/right), constrained in safeAttrValue.
+    img: ["src", "alt", "width", "height", "data-align"],
     table: [], thead: [], tbody: [], tr: [], th: [], td: [],
   },
   stripIgnoreTag: true, // discard tags not on the whitelist (don't escape them)
@@ -45,6 +46,10 @@ const filter = new xss.FilterXSS({
     // Reject data:/javascript: image sources outright (js-xss allows some data: by default).
     if (tag === "img" && name === "src" && /^\s*(data|javascript):/i.test(value)) {
       return "";
+    }
+    // `data-align` is an enum; anything else is dropped (spec 0026).
+    if (tag === "img" && name === "data-align") {
+      return /^(left|center|right)$/.test(value) ? value : "";
     }
     return xss.safeAttrValue(tag, name, value, cssFilter);
   },

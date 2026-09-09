@@ -1,13 +1,17 @@
 "use client";
 
-import ImageExt from "@tiptap/extension-image";
 import LinkExt from "@tiptap/extension-link";
 import { type Editor, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { HelpArticleBody } from "@/components/help-article-body";
 import { HELP_PAGE_KEYS } from "@/lib/help-page-keys";
+import { uploadHelpImage } from "@/lib/help-image-upload";
+import { MediaPicker } from "./media-picker";
+import type { MediaImage } from "./media-shared";
+import { ResizableImage } from "./resizable-image";
 
 // The Knowledge base article editor (spec 0025). Two columns: title + WYSIWYG body on the left,
 // an "Article details" rail on the right (category, tags, audience, featured image, related,
@@ -78,8 +82,39 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
   const [busy, setBusy] = useState<"draft" | "published" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const bodyFileRef = useRef<HTMLInputElement>(null);
-  const featFileRef = useRef<HTMLInputElement>(null);
+  // Which flow the media picker is open for (spec 0026): a body image, the featured image, or closed.
+  const [pickerFor, setPickerFor] = useState<null | "body" | "featured">(null);
+  // Unsaved-changes tracking (spec 0026 polish). `dirty` is a pure comparison to the values the
+  // article loaded with, so it is StrictMode-proof (no first-run flag to get flipped) and returns
+  // to false if the author reverts an edit. Body edits are tracked separately via Tiptap.
+  const [bodyDirty, setBodyDirty] = useState(false);
+  const bodyReady = useRef(false);
+  const leaving = useRef(false); // set just before an intentional post-save navigation
+  // Live preview (spec 0026 polish): render the body with reader typography before publishing.
+  const [preview, setPreview] = useState(false);
+  // Saving must preserve the article's current status: "Save changes" on a published article
+  // keeps it published (Ctrl/⌘-S too), so a plain save never unpublishes. Status only changes
+  // via the explicit Publish / Unpublish actions.
+  const isPublished = article?.status === "published";
+  const primaryStatus: "draft" | "published" = isPublished ? "published" : "draft";
+  // The normalized body HTML at load time. Tiptap reformats the stored HTML on load and fires
+  // onUpdate for it, so we compare against this baseline (not the raw stored string) to avoid a
+  // false "unsaved changes" before the author types anything.
+  const bodyBaseline = useRef<string | null>(null);
+  // Snapshot of the rail/details fields at load, to compare against for the dirty check.
+  const initialFields = useRef({
+    title: article?.title ?? "",
+    slug: article?.slug ?? "",
+    excerpt: article?.excerpt ?? "",
+    categoryId: article?.categoryId ?? "",
+    audience: (article?.audience ?? "all") as "all" | "admins",
+    tags: parseJsonArray(article?.tags),
+    relatedIds: parseJsonArray(article?.relatedIds),
+    featuredImageId: article?.featuredImageId ?? "",
+    sortOrder: article?.sortOrder ?? 0,
+    pageKey: article?.pageKey ?? "",
+    shared: article?.shared ?? false,
+  });
 
   useEffect(() => {
     fetch("/api/help/categories", { cache: "no-store" })
@@ -106,15 +141,30 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
-      StarterKit,
+      // Tiptap v3's StarterKit bundles its own Link; disable it so our configured LinkExt
+      // (rel + no open-on-click) is the only link extension (avoids the duplicate-name warning).
+      StarterKit.configure({ link: false }),
       LinkExt.configure({
         openOnClick: false,
         autolink: true,
         HTMLAttributes: { rel: "noopener noreferrer nofollow" },
       }),
-      ImageExt,
+      ResizableImage,
     ],
     content: article?.bodyHtml ?? "<p></p>",
+    onCreate: ({ editor }) => {
+      // Capture the baseline after ProseMirror finishes normalizing the loaded HTML (a macrotask
+      // later), and ignore updates until then, so loading an article is never counted as an edit.
+      bodyBaseline.current = editor.getHTML();
+      setTimeout(() => {
+        bodyBaseline.current = editor.getHTML();
+        bodyReady.current = true;
+      }, 0);
+    },
+    onUpdate: ({ editor }) => {
+      if (!bodyReady.current) return;
+      setBodyDirty(editor.getHTML() !== bodyBaseline.current);
+    },
     editorProps: {
       attributes: {
         class:
@@ -130,7 +180,7 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
   }
 
   async function save(status: "draft" | "published") {
-    if (!editor) return;
+    if (!editor || busy) return; // ignore re-entry (e.g. Ctrl-S key-repeat)
     const t = title.trim();
     if (!t) {
       setErr("A title is required.");
@@ -169,8 +219,11 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
         const b = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error ?? "Could not save.");
       }
+      leaving.current = true; // so the guard doesn't warn on the post-save navigation
+      // Navigate only; the list re-fetches on mount. Calling router.refresh() here would
+      // refetch the RSC for the page we're leaving and race the navigation ("Failed to fetch
+      // RSC payload for …/[id]").
       router.push("/kb/articles");
-      router.refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not save.");
       setBusy(null);
@@ -185,8 +238,8 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
         method: "DELETE",
       });
       if (!res.ok) throw new Error();
+      leaving.current = true;
       router.push("/kb/articles");
-      router.refresh();
     } catch {
       setErr("Could not delete.");
       setBusy(null);
@@ -194,23 +247,95 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
     }
   }
 
-  async function onBodyImage(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !editor) return;
-    const up = await uploadImage(file, article?.id);
-    if (up) editor.chain().focus().setImage({ src: up.url }).run();
-    else setErr("Image upload failed.");
+  // The media picker returns a chosen (or freshly uploaded) library image. Insert it into the
+  // body with its alt text, or set it as the featured image, depending on which flow is open.
+  function onPickImage(img: MediaImage) {
+    if (pickerFor === "body" && editor) {
+      editor
+        .chain()
+        .focus()
+        .setImage({ src: img.url, alt: img.altText ?? "" })
+        .run();
+    } else if (pickerFor === "featured") {
+      setFeaturedImageId(img.id);
+    }
+    setPickerFor(null);
   }
 
-  async function onFeatured(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    const up = await uploadImage(file, article?.id);
-    if (up) setFeaturedImageId(up.imageId);
-    else setErr("Featured image upload failed.");
-  }
+  // Dirty = any field differs from what the article loaded with, or the body changed. A pure
+  // comparison (no effects/flags), so it is correct on first paint and reverts to false when an
+  // edit is undone.
+  const init = initialFields.current;
+  const fieldsDirty =
+    title !== init.title ||
+    slug !== init.slug ||
+    excerpt !== init.excerpt ||
+    categoryId !== init.categoryId ||
+    audience !== init.audience ||
+    featuredImageId !== init.featuredImageId ||
+    sortOrder !== init.sortOrder ||
+    pageKey !== init.pageKey ||
+    shared !== init.shared ||
+    tags.join("") !== init.tags.join("") ||
+    relatedIds.join("") !== init.relatedIds.join("");
+  const dirty = fieldsDirty || bodyDirty;
+
+  // Warn before the browser unloads (refresh / close / external nav) with unsaved edits — unless
+  // we are intentionally navigating away right after a save.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      if (leaving.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
+  // Guard IN-APP navigation too (Next Link clicks: the KB sidebar, breadcrumb, "Back to app").
+  // beforeunload never fires for those, so intercept the click in the capture phase and confirm
+  // before letting the router navigate. Links inside the editor body and external links are left
+  // alone.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: MouseEvent) => {
+      if (leaving.current || e.defaultPrevented || e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // open-in-new-tab etc.
+      const anchor = (e.target as HTMLElement | null)?.closest?.("a[href]");
+      if (!anchor) return;
+      if (anchor.closest(".ProseMirror")) return; // a link inside the article body
+      const href = anchor.getAttribute("href") ?? "";
+      if (!href.startsWith("/")) return; // only in-app routes
+      if (anchor.getAttribute("target") === "_blank") return;
+      if (!window.confirm("You have unsaved changes. Leave without saving?")) {
+        e.preventDefault();
+        e.stopPropagation();
+      } else {
+        leaving.current = true; // allow this navigation (and skip beforeunload)
+      }
+    };
+    document.addEventListener("click", handler, true);
+    return () => document.removeEventListener("click", handler, true);
+  }, [dirty]);
+
+  // Ctrl/Cmd-S saves a draft (only when there are unsaved changes). Refs keep the handler
+  // pointed at the latest save closure and dirty flag without re-subscribing each render.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        // Preserve status: never unpublish a published article on Ctrl/⌘-S.
+        if (dirtyRef.current) void saveRef.current(primaryStatus);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   return (
     <div>
@@ -230,22 +355,32 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
             Write and publish a help article for your staff.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {/* Publish toggle: Publish a draft, or Unpublish a published article. Persists the
+              current edits as it flips the status. */}
           <button
             type="button"
             disabled={busy !== null}
-            onClick={() => void save("draft")}
-            className="rounded-[--radius-panel] border border-border bg-surface px-4 py-2 text-sm font-medium text-slate-700 hover:bg-canvas disabled:opacity-50"
+            onClick={() => void save(isPublished ? "draft" : "published")}
+            className="rounded-[--radius-panel] border border-brand-600 bg-surface px-4 py-2 text-sm font-semibold text-brand-600 hover:bg-canvas disabled:opacity-50"
           >
-            {busy === "draft" ? "Saving…" : "Save draft"}
+            {isPublished ? "Unpublish" : "Publish"}
           </button>
+
+          {/* Save — the obvious action. Greyed out when there is nothing to save; solid and
+              gently pulsing when there are unsaved edits. Keeps the current status. */}
           <button
             type="button"
-            disabled={busy !== null}
-            onClick={() => void save("published")}
-            className="rounded-[--radius-panel] bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-50"
+            disabled={busy !== null || !dirty}
+            onClick={() => void save(primaryStatus)}
+            title={dirty ? "Save (Ctrl/⌘+S)" : "No changes to save"}
+            className={`rounded-[--radius-panel] px-5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed ${
+              dirty
+                ? "help-save-pulse bg-brand-600 text-white hover:bg-brand-800"
+                : "bg-slate-100 text-muted-500"
+            }`}
           >
-            {busy === "published" ? "Publishing…" : "Publish"}
+            {busy !== null ? "Saving…" : "Save"}
           </button>
         </div>
       </div>
@@ -268,18 +403,45 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
             />
           </Field>
           <div>
-            <span className="mb-1 block text-xs font-medium text-slate-700">
-              Body
-            </span>
-            <Toolbar editor={editor} onImage={() => bodyFileRef.current?.click()} />
-            <EditorContent editor={editor} />
-            <input
-              ref={bodyFileRef}
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              hidden
-              onChange={onBodyImage}
-            />
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-700">Body</span>
+              <div className="inline-flex overflow-hidden rounded-[--radius-panel] border border-border text-xs">
+                <button
+                  type="button"
+                  onClick={() => setPreview(false)}
+                  aria-pressed={!preview}
+                  className={`px-2.5 py-1 font-medium ${!preview ? "bg-brand-600 text-white" : "bg-surface text-muted-500 hover:bg-canvas"}`}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreview(true)}
+                  aria-pressed={preview}
+                  className={`px-2.5 py-1 font-medium ${preview ? "bg-brand-600 text-white" : "bg-surface text-muted-500 hover:bg-canvas"}`}
+                >
+                  Preview
+                </button>
+              </div>
+            </div>
+            {preview ? (
+              <div className="rounded-[--radius-panel] border border-border bg-surface px-4 py-3">
+                {title.trim() && (
+                  <h1 className="text-2xl font-bold tracking-tight text-brand-900">
+                    {title.trim()}
+                  </h1>
+                )}
+                {excerpt.trim() && (
+                  <p className="mt-1.5 text-lg text-muted-500">{excerpt.trim()}</p>
+                )}
+                <HelpArticleBody html={editor?.getHTML() ?? ""} />
+              </div>
+            ) : (
+              <>
+                <Toolbar editor={editor} onImage={() => setPickerFor("body")} />
+                <EditorContent editor={editor} />
+              </>
+            )}
           </div>
         </div>
 
@@ -378,19 +540,12 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
               ) : (
                 <button
                   type="button"
-                  onClick={() => featFileRef.current?.click()}
+                  onClick={() => setPickerFor("featured")}
                   className="w-full rounded-[--radius-panel] border border-dashed border-border py-4 text-xs text-muted-500 hover:bg-canvas"
                 >
-                  Click to upload
+                  Choose or upload
                 </button>
               )}
-              <input
-                ref={featFileRef}
-                type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                hidden
-                onChange={onFeatured}
-              />
             </div>
           </div>
 
@@ -512,36 +667,17 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
         onConfirm={() => void remove()}
       />
 
+      {pickerFor && (
+        <MediaPicker
+          title={pickerFor === "featured" ? "Featured image" : "Insert image"}
+          onSelect={onPickImage}
+          onClose={() => setPickerFor(null)}
+        />
+      )}
+
       <style>{`.input{width:100%;border-radius:var(--radius-panel);border:1px solid var(--color-border);background:var(--color-canvas);padding:0.5rem 0.75rem;font-size:0.875rem;color:#0f172a}.input:focus{outline:none;border-color:var(--color-accent-500);box-shadow:0 0 0 2px color-mix(in srgb,var(--color-accent-500) 25%,transparent)}`}</style>
     </div>
   );
-}
-
-async function uploadImage(
-  file: File,
-  articleId?: string,
-): Promise<{ imageId: string; url: string } | null> {
-  try {
-    const res = await fetch("/api/help/images", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contentType: file.type, articleId }),
-    });
-    if (!res.ok) return null;
-    const { imageId, uploadUrl, url } = (await res.json()) as {
-      imageId: string;
-      uploadUrl: string;
-      url: string;
-    };
-    const put = await fetch(uploadUrl, {
-      method: "PUT",
-      body: file,
-      headers: { "Content-Type": file.type },
-    });
-    return put.ok ? { imageId, url } : null;
-  } catch {
-    return null;
-  }
 }
 
 function Toolbar({
