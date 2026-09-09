@@ -5,6 +5,9 @@
 
 APP_URL="http://localhost:3000"
 NEXT_PUBLIC_APP_NAME="AW File Storage"
+# Support inbox for the in-app "Contact support" form (POST /api/help/support, sent via
+# Resend). Falls back to support@americaworks.com when unset.
+# SUPPORT_EMAIL="support@americaworks.com"
 # Extra exact origins Better Auth accepts besides APP_URL (comma separated).
 # In production this is set in wrangler.jsonc `vars`.
 # TRUSTED_ORIGINS=""

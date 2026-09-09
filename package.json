@@ -17,6 +17,11 @@
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.3",
+    "@tiptap/extension-image": "^3.31.3",
+    "@tiptap/extension-link": "^3.31.3",
+    "@tiptap/pm": "^3.31.3",
+    "@tiptap/react": "^3.31.3",
+    "@tiptap/starter-kit": "^3.31.3",
     "aws4fetch": "^1.0.20",
     "better-auth": "1.7.3",
     "drizzle-orm": "^0.45.2",
@@ -25,6 +30,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "xss": "^1.0.15",
     "zod": "^4.4.3"
   },
   "devDependencies": {
