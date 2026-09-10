@@ -1,7 +1,7 @@
 # 0029. Admin controls for the bulk import rate limit
 
 **Date**: 2026-09-10
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 

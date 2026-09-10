@@ -1,0 +1,60 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "aw-file-storage",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2026-08-01",
+	// nodejs_compat is required by Next.js on Workers (OpenNext).
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"routes": [
+		{
+			"pattern": "",
+			"custom_domain": true
+		},
+		{
+			"pattern": "",
+			"custom_domain": true
+		}
+	],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		"TRUSTED_ORIGINS": "",
+		"PUBLIC_FILE_DOMAIN": "",
+		"PLATFORM_OWNER_EMAILS": "",
+		"R2_ACCOUNT_ID": "",
+		"R2_PRIVATE_BUCKET": "",
+		"R2_PUBLIC_BUCKET": "",
+		"MAX_IMPORT_ROWS": "250",
+		"IMPORT_RATE_PER_HOUR": "5",
+		"CARD_IMPORT_DRAIN_BATCH": "20",
+		"CARD_IMPORT_MAX_ATTEMPTS": "3"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "",
+			"database_id": "",
+			"migrations_dir": "migrations"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "FILES_PRIVATE",
+			"bucket_name": ""
+		},
+		{
+			"binding": "FILES_PUBLIC",
+			"bucket_name": ""
+		}
+	],
+	"ai": {
+		"binding": "AI"
+	},
+}
