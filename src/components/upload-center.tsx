@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppData } from "@/components/app-data";
+import { SpreadsheetImport } from "@/components/spreadsheet-import";
 import { formatBytes, formatDuration } from "@/lib/format";
+
+// A spreadsheet dropped here isn't a single file to store — it's a bulk contact-card
+// import (spec 0028). We intercept it and open the mapping wizard instead of uploading.
+const SPREADSHEET_RE = /\.(csv|xlsx)$/i;
 
 type Status =
   | "queued"
@@ -101,6 +106,8 @@ function putWithProgress(
 export function UploadCenter() {
   const { refresh } = useAppData();
   const [items, setItems] = useState<Item[]>([]);
+  // The spreadsheet currently being imported (opens the mapping wizard), or null.
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   // Online status (starts optimistic so SSR doesn't touch `navigator`; corrected
@@ -131,7 +138,15 @@ export function UploadCenter() {
 
   const addFiles = useCallback(
     (files: FileList | null) => {
-      if (files) enqueue(Array.from(files));
+      if (!files) return;
+      const arr = Array.from(files);
+      // A spreadsheet opens the bulk-import wizard (its rows never upload as a file);
+      // everything else queues as a normal upload. If several spreadsheets arrive at
+      // once, import the first — one mapping flow at a time.
+      const sheets = arr.filter((f) => SPREADSHEET_RE.test(f.name));
+      const others = arr.filter((f) => !SPREADSHEET_RE.test(f.name));
+      if (others.length) enqueue(others);
+      if (sheets.length) setImportFile(sheets[0]);
     },
     [enqueue],
   );
@@ -368,6 +383,12 @@ export function UploadCenter() {
           Contact cards (.vcf) are published to a public address; everything else
           stays private.
         </p>
+        <p className="mt-1 text-sm text-muted-500">
+          Have a list of contacts? Drop a{" "}
+          <span className="font-medium text-slate-700">.csv</span> or{" "}
+          <span className="font-medium text-slate-700">.xlsx</span> to import them as
+          cards in one pass.
+        </p>
       </div>
 
       {/* Drop zone */}
@@ -464,6 +485,13 @@ export function UploadCenter() {
         </a>{" "}
         page.
       </p>
+
+      {importFile && (
+        <SpreadsheetImport
+          file={importFile}
+          onClose={() => setImportFile(null)}
+        />
+      )}
     </div>
   );
 }

@@ -184,11 +184,14 @@ function MemberRowView({
   const lockedOwnerTarget = targetIsOwner && !isOwnerCaller;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(
     null,
   );
-  const [dialog, setDialog] = useState<null | "suspend" | "remove">(null);
+  const [dialog, setDialog] = useState<null | "suspend" | "remove" | "reset">(
+    null,
+  );
   const btnRef = useRef<HTMLButtonElement>(null);
 
   // Position a portalled menu at the button, and close it on scroll/resize so it
@@ -253,9 +256,34 @@ function MemberRowView({
     }
   }
 
+  async function resetImportLimit() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(
+        `/api/members/${member.id}/import-rate-reset`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Could not reset the import limit.");
+      }
+      setNotice("Import limit reset.");
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Could not reset the import limit.",
+      );
+    } finally {
+      setBusy(false);
+      setDialog(null);
+    }
+  }
+
   async function remove() {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch(`/api/members/${member.id}`, { method: "DELETE" });
       if (!res.ok) {
@@ -330,6 +358,11 @@ function MemberRowView({
             {error}
           </p>
         )}
+        {notice && !error && (
+          <p className="mt-1 max-w-[14rem] text-right text-xs text-emerald-700">
+            {notice}
+          </p>
+        )}
 
         {menuOpen &&
           menuPos &&
@@ -373,6 +406,16 @@ function MemberRowView({
                     Suspend
                   </MenuItem>
                 )}
+                {!lockedOwnerTarget && (
+                  <MenuItem
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setDialog("reset");
+                    }}
+                  >
+                    Reset import limit
+                  </MenuItem>
+                )}
                 {!isSelf && !lockedOwnerTarget && (
                   <MenuItem
                     danger
@@ -397,6 +440,15 @@ function MemberRowView({
           busy={busy}
           onCancel={() => setDialog(null)}
           onConfirm={() => void setStatus("suspended")}
+        />
+        <ConfirmDialog
+          open={dialog === "reset"}
+          title={`Reset import limit for ${member.name}?`}
+          body="They can start bulk contact-card imports again right away. Their existing imports stay; only the hourly counter is cleared. This is recorded in Activity."
+          confirmLabel="Reset limit"
+          busy={busy}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => void resetImportLimit()}
         />
         <ConfirmDialog
           open={dialog === "remove"}

@@ -9,6 +9,7 @@ import { accountLock, auditEvents, files } from "./db/schema";
 import { buildDb } from "./db";
 import { account, member, session, twoFactor, user } from "./db/auth-schema";
 import { linkEmail, sendEmail } from "./email";
+import { orgDb } from "./org-db";
 
 export type OrgRole = "owner" | "admin" | "member";
 
@@ -418,6 +419,38 @@ export async function getMemberDetail(
       twoFactorRequired: Boolean(m.twoFactorRequired),
     },
   };
+}
+
+/**
+ * Reset a member's bulk-import rate limit (spec 0029). Writes one `import.rate_reset`
+ * audit event naming the acting admin (actor) and the target user; that event's time
+ * becomes the user's new counting-window floor in the submit path, so their imports
+ * from before the reset stop counting toward the hourly cap. It deletes NO import
+ * history — the event only moves the window (AC-3/AC-4). Owner-tier: an admin may
+ * reset a member or another admin, but only an owner may reset an owner (spec 0021).
+ * The audit write goes through orgDb so it is scoped to the active org (AC-8).
+ */
+export async function resetImportRateLimit(opts: {
+  env: MemberEnv;
+  orgId: string;
+  actorUserId: string;
+  actorRole: OrgRole;
+  memberId: string;
+}): Promise<{ userId: string }> {
+  const { env, orgId, actorUserId, actorRole, memberId } = opts;
+  const db = buildDb(env.DB);
+  const m = await getMemberInOrg(db, orgId, memberId);
+  if (!m) throw new MemberError(404, "Member not found.");
+  // An admin lifting an owner's limit would act on an owner account (spec 0021).
+  assertOwnerActionAllowed(actorRole, m);
+
+  await orgDb(orgId, db).audit.append({
+    actorUserId,
+    action: "import.rate_reset",
+    targetType: "user",
+    targetId: m.userId,
+  });
+  return { userId: m.userId };
 }
 
 /** Admin-set whether a member must enrol two-factor before using the app (AC-11). */

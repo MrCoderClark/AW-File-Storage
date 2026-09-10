@@ -36,6 +36,8 @@ const CATEGORY: Record<string, LogCategory> = {
   "member.password_reset_sent": "user",
   "member.password_set": "user",
   "member.two_factor_reset": "user",
+  "import.rate_limit_changed": "user",
+  "import.rate_reset": "user",
   "file.deleted": "file",
   "file.renamed": "file",
   "file.link_created": "file",
@@ -76,6 +78,8 @@ const ACTION_PHRASE: Record<string, string> = {
   "member.password_reset_sent": "Password reset link sent",
   "member.password_set": "Password set",
   "member.two_factor_reset": "Two-factor reset",
+  "import.rate_limit_changed": "Import limit changed",
+  "import.rate_reset": "Import limit reset",
   "file.deleted": "File deleted",
   "file.renamed": "File renamed",
   "file.link_created": "Download link created",
@@ -117,6 +121,13 @@ export function logDetail(metadataJson: string | null): string {
     meta = JSON.parse(metadataJson) as Record<string, unknown>;
   } catch {
     return "";
+  }
+  // A numeric before/after change (spec 0029 import.rate_limit_changed) reads as
+  // "5 → 20"; a null side is the env default. Keyed on from/to so only this event
+  // matches (member.role_changed uses before/after and is unaffected).
+  if ("from" in meta || "to" in meta) {
+    const fmt = (v: unknown): string => (v == null ? "default" : String(v));
+    return `${fmt(meta.from)} → ${fmt(meta.to)}`;
   }
   const pick = (k: string): string | null =>
     typeof meta[k] === "string" && (meta[k] as string).trim()

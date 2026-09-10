@@ -61,13 +61,75 @@ export async function GET() {
     .where(eq(organization.id, auth.actor.orgId))
     .limit(1);
   if (!org) return Response.json({ ok: false }, { status: 404 });
+  // The per-org bulk-import rate override (spec 0029); null means "use the env default".
+  const { importRatePerHour } = await orgDbFor(
+    auth.actor.orgId,
+    (env as unknown as UploadEnv).DB,
+  ).settings.get();
   return Response.json({
     ok: true,
     org,
     role: auth.actor.role,
     canDelete: auth.actor.role === "owner",
     canCreate: await isPlatformOwner(),
+    importRatePerHour,
   });
+}
+
+// PATCH → per-org settings the owner/admin may change here. Currently just the
+// bulk-import rate override (spec 0029): an integer 1..100 raises/lowers the cap
+// for THIS org, and null clears it so the IMPORT_RATE_PER_HOUR env default applies
+// again. Owner or admin (like every other org setting); the change is audited.
+export async function PATCH(req: Request) {
+  const auth = await requireApiRole("admin");
+  if (!auth.ok) return auth.response;
+
+  const body = (await req.json().catch(() => ({}))) as {
+    importRatePerHour?: number | null;
+  };
+  if (!("importRatePerHour" in body)) {
+    return Response.json(
+      { ok: false, error: "No setting to update." },
+      { status: 400 },
+    );
+  }
+  const raw = body.importRatePerHour;
+  let next: number | null;
+  if (raw === null) {
+    next = null; // clear the override (AC-7)
+  } else if (
+    typeof raw === "number" &&
+    Number.isInteger(raw) &&
+    raw >= 1 &&
+    raw <= 100
+  ) {
+    next = raw;
+  } else {
+    return Response.json(
+      {
+        ok: false,
+        error: "Imports per hour must be a whole number from 1 to 100.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const { env } = getCloudflareContext();
+  const scoped = orgDbFor(auth.actor.orgId, (env as unknown as UploadEnv).DB);
+  const before = (await scoped.settings.get()).importRatePerHour;
+  if (before !== next) {
+    await scoped.settings.setImportRatePerHour(next);
+    // One audit event per real change (AC-6), so loosening the abuse guard is
+    // always attributable. from/to are what the Activity feed renders.
+    await scoped.audit.append({
+      actorUserId: auth.actor.userId,
+      action: "import.rate_limit_changed",
+      targetType: "org",
+      targetId: auth.actor.orgId,
+      metadataJson: JSON.stringify({ from: before, to: next }),
+    });
+  }
+  return Response.json({ ok: true });
 }
 
 export async function POST(req: Request) {

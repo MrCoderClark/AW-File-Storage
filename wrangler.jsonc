@@ -49,7 +49,16 @@
 		"PLATFORM_OWNER_EMAILS": "jclark@americaworks.com",
 		"R2_ACCOUNT_ID": "25712314130a03e3364b9be5286c0eef",
 		"R2_PRIVATE_BUCKET": "aw-files-private",
-		"R2_PUBLIC_BUCKET": "aw-files-public"
+		"R2_PUBLIC_BUCKET": "aw-files-public",
+		// Bulk contact-card import (spec 0028). All optional — the server falls back to
+		// these same defaults if unset. MAX_IMPORT_ROWS: per-import row cap. IMPORT_RATE_
+		// PER_HOUR: accepted imports per user per hour. CARD_IMPORT_DRAIN_BATCH: rows the
+		// cron drain publishes per tick (kept small to stay within Worker CPU/subrequest
+		// limits). CARD_IMPORT_MAX_ATTEMPTS: drain attempts before a row is marked failed.
+		"MAX_IMPORT_ROWS": "250",
+		"IMPORT_RATE_PER_HOUR": "5",
+		"CARD_IMPORT_DRAIN_BATCH": "20",
+		"CARD_IMPORT_MAX_ATTEMPTS": "3"
 	},
 	"d1_databases": [
 		{

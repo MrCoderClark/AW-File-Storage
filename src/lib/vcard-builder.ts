@@ -15,6 +15,7 @@ export interface CardFields {
   workPhone?: string;
   fax?: string;
   organization?: string;
+  department?: string;
   jobTitle?: string;
   street?: string;
   city?: string;
@@ -70,12 +71,22 @@ export function buildVcard(f: CardFields): string {
   // N: Family;Given;Additional;Prefix;Suffix
   lines.push(`N:${e(last)};${e(first)};;;`);
   lines.push(`FN:${e(full)}`);
-  lines.push(`EMAIL;TYPE=WORK:${e(f.email.trim())}`);
+  // Emit EMAIL only when present — a card built from a spreadsheet row (spec 0028)
+  // may have no email, and an empty `EMAIL:` line is noise. (The Create-Card form
+  // requires email, so its output is unchanged.)
+  if (f.email.trim()) lines.push(`EMAIL;TYPE=WORK:${e(f.email.trim())}`);
 
   const mobile = f.mobilePhone?.trim() ? parsePhone(f.mobilePhone) : null;
   if (mobile) lines.push(`TEL;TYPE=CELL,VOICE:${mobile}`);
 
-  if (f.organization?.trim()) lines.push(`ORG:${e(f.organization.trim())}`);
+  // ORG carries the organization and, as its second structured component, the
+  // department (RFC 6350 `ORG:Organization;Unit`). Department is only emitted
+  // alongside ORG; callers that pass neither get no ORG line, as before.
+  const orgName = f.organization?.trim() ?? "";
+  const dept = f.department?.trim() ?? "";
+  if (orgName || dept) {
+    lines.push(dept ? `ORG:${e(orgName)};${e(dept)}` : `ORG:${e(orgName)}`);
+  }
   if (f.jobTitle?.trim()) lines.push(`TITLE:${e(f.jobTitle.trim())}`);
 
   const adr = [f.street, f.city, f.state, f.zip, f.country].map((v) =>

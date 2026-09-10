@@ -65,6 +65,13 @@ export const files = sqliteTable(
     }).notNull(),
     failureReason: text("failure_reason"),
     publicSlug: text("public_slug"),
+    // The UNSUFFIXED slug derived from the contact name (spec 0028 AC-7). `public_slug`
+    // is globally unique and gets a random suffix on a cross-org collision; `slug_base`
+    // keeps the bare `First_Last` so a bulk import can enforce ONE card per person per
+    // org through the partial unique index below, rather than a racy read-then-write.
+    // Only set by the bulk-import publish path for now; null on cards from every other
+    // path (so their behaviour is unchanged).
+    slugBase: text("slug_base"),
     publishedAt: integer("published_at", { mode: "timestamp_ms" }),
     // Searchable contact fields, denormalised from the vCard at finalize (spec
     // 0003) so the Files list can search by name/company/title/email in SQL —
@@ -122,6 +129,13 @@ export const files = sqliteTable(
     uniqueIndex("file_org_checksum_uq")
       .on(t.orgId, t.checksumSha256)
       .where(sql`${t.deletedAt} is null`),
+    // One live card per (org, derived name slug) for the bulk-import path (spec 0028
+    // AC-7): two import rows in one sheet — or across concurrent drains — that derive
+    // the same slug cannot both publish. Partial, so it only constrains rows that set
+    // slug_base (import cards) and ignores soft-deleted ones.
+    uniqueIndex("file_org_slug_base_uq")
+      .on(t.orgId, t.slugBase)
+      .where(sql`${t.slugBase} is not null and ${t.deletedAt} is null`),
     check("file_bucket_ck", sql`${t.bucket} in ('private','public')`),
     check("file_visibility_ck", sql`${t.visibility} in ('private','public')`),
     check("file_kind_ck", sql`${t.kind} in ('vcard','other')`),
@@ -325,6 +339,12 @@ export const orgSettings = sqliteTable("org_settings", {
   })
     .notNull()
     .default(false),
+  // Per-org override for the bulk-import rate limit (spec 0029). Null means "no
+  // override": the submit path falls back to the IMPORT_RATE_PER_HOUR env default.
+  // When set, it is constrained to 1..100 in application code (never at the column,
+  // so an out-of-range value is a 400, not a DB error). Additive ADD COLUMN on this
+  // leaf table — org_settings is never rebuilt (gotcha #9).
+  importRatePerHour: integer("import_rate_per_hour"),
   updatedAt: updatedAt(),
 });
 
@@ -523,4 +543,111 @@ export const helpCategories = sqliteTable(
     updatedAt: updatedAt(),
   },
   (t) => [index("help_category_org_parent_idx").on(t.orgId, t.parentId, t.sortOrder)],
+);
+
+// Bulk contact-card import (spec 0028). Two additive leaf tables track an import run
+// and its per-row outcomes; the published cards themselves are ordinary `file` rows
+// made by the existing publish pipeline (publishVcardFromBytes). Reached only through
+// orgDb().cardImports, so a query cannot skip its org filter. Create-only migration —
+// `organization`/`file` are never rebuilt (gotcha #9).
+//
+// `card_import.id` is the CLIENT-generated import id (a uuid the browser mints), so a
+// repeat submit collides on the primary key and is treated as the same import (AC-11):
+// it is NOT the server-default id().
+export const cardImports = sqliteTable(
+  "card_import",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id),
+    status: text("status", {
+      enum: [
+        "pending",
+        "processing",
+        "completed",
+        "completed_with_errors",
+        "failed",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    totalRows: integer("total_rows").notNull().default(0),
+    publishedCount: integer("published_count").notNull().default(0),
+    skippedCount: integer("skipped_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // Listing an org's imports, newest first.
+    index("card_import_org_created_idx").on(t.orgId, t.createdAt),
+    // The per-user hourly submission rate limit counts an org's imports by actor+time (AC-9).
+    index("card_import_org_actor_created_idx").on(
+      t.orgId,
+      t.actorUserId,
+      t.createdAt,
+    ),
+    check(
+      "card_import_status_ck",
+      sql`${t.status} in ('pending','processing','completed','completed_with_errors','failed')`,
+    ),
+  ],
+);
+
+// One row per source spreadsheet row. Stores the server-validated MAPPED field set
+// (payload_json) so publishing happens in the background drain, not in the submit
+// request (spec 0028 AC-6). `(import_id, row_number)` is unique — the idempotency key
+// for a resumed drain so a row is never published twice (AC-13).
+export const cardImportRows = sqliteTable(
+  "card_import_row",
+  {
+    id: id(),
+    importId: text("import_id")
+      .notNull()
+      .references(() => cardImports.id, { onDelete: "cascade" }),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // The source spreadsheet row number, shown in the report.
+    rowNumber: integer("row_number").notNull(),
+    // The derived full name shown in the report (null when the row has no usable name).
+    contactName: text("contact_name"),
+    // The mapped CardFields for this contact as JSON (not raw spreadsheet cells). The
+    // drain rebuilds the vCard from this and publishes it. Server-validated before store.
+    payloadJson: text("payload_json").notNull(),
+    outcome: text("outcome", {
+      enum: ["pending", "processing", "published", "skipped", "failed"],
+    })
+      .notNull()
+      .default("pending"),
+    // Why the row was skipped or failed (null otherwise).
+    reason: text("reason"),
+    // Drain attempt count for bounded retry (AC-13): a row that keeps failing is marked
+    // `failed` once attempts reach CARD_IMPORT_MAX_ATTEMPTS rather than retried forever.
+    attempts: integer("attempts").notNull().default(0),
+    // When a drain last claimed the row (pending -> processing). A `processing` row older
+    // than a reclaim threshold is returned to `pending` for the next drain (AC-13).
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
+    // The published card when outcome = published; null when pending/skipped/failed.
+    fileId: text("file_id").references(() => files.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // The idempotency key for a resumed drain (AC-11 storage half / AC-13).
+    uniqueIndex("card_import_row_import_rownum_uq").on(t.importId, t.rowNumber),
+    // Find `pending` (and stale `processing`) rows to drain, across orgs.
+    index("card_import_row_outcome_claimed_idx").on(t.outcome, t.claimedAt),
+    // Read one import's rows (org-scoped) for the results view.
+    index("card_import_row_org_import_idx").on(t.orgId, t.importId),
+    check(
+      "card_import_row_outcome_ck",
+      sql`${t.outcome} in ('pending','processing','published','skipped','failed')`,
+    ),
+  ],
 );
