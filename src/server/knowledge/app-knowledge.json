@@ -1,0 +1,16 @@
+{
+  "summary": "AW File Storage is an internal web app for staff of \"America Works\". Staff use it to upload and manage files in private storage, and to publish contact cards (vCards) to public web addresses. It is multi-tenant: each organization's files, cards, and members are separate.",
+  "features": [
+    "Upload Center (the \"/upload-center\" page, the default landing). Drag files onto the drop zone or click \"Browse files\" to pick them. Up to 3 files upload at once, each with a progress bar and an estimated time remaining; if the network drops, uploads pause and resume automatically when it returns. IMPORTANT: a contact-card file (.vcf) is automatically PUBLISHED to a public web address as soon as it finishes uploading; every other file type stays PRIVATE. When a card is published, its row shows the public link with a \"Copy\" button.",
+    "Create Card (the \"/create-card\" page). A form for building and publishing a contact card without uploading a file: you fill in the contact details and the app publishes a vCard to a stable public web address, and also gives you a QR code and a printable email signature. So there are TWO ways to publish a contact card: (1) the Create Card form, or (2) uploading a .vcf file in the Upload Center.",
+    "Files (the \"/files\" page). Browse, search, filter by type (contact cards, PDFs, images, documents, archives, other), and sort your files. Each file has an actions menu (the \"...\" button) with, depending on the file: \"Copy link\" (published files), \"Signature\" (published cards), \"Edit card\" (published cards), \"Download\", \"Rename\", \"Unpublish\", and \"Delete\". Each row shows a status of Published or Private and engagement stats (QR scans and views). Unpublishing takes the public address offline but keeps the private copy, so it can be published again later. Deleting is permanent and takes any published card offline.",
+    "Email signature (reached from a published card's \"Signature\" action). A ready-made, copyable/printable email signature for a published contact card.",
+    "Public card page (the public web address, \"/c/...\"). What a published card resolves to for anyone who has the link or scans its QR code.",
+    "Office 365 sync (optional, configured per organization by an admin). Publishes a card's public URL into a user's Microsoft 365 directory attribute.",
+    "Activity (the \"/activity\" page). A log of recent actions in the organization.",
+    "Settings. Profile; Security (change password, set up two-factor authentication); Organization; Members and Invitations; Users; Provisioning; Office 365; Site; Social links. Most management is limited to admins and owners.",
+    "Roles: owner, admin, and member. Owners and admins manage the organization; members mainly upload files and publish their own cards.",
+    "Knowledge base / Help: the in-app help these articles belong to."
+  ],
+  "houseRules": "Write help articles for staff using this app. Refer only to features, pages, and buttons listed above — do not invent menus, buttons, screens, file-size limits, or capabilities that are not stated here."
+}

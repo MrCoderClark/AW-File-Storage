@@ -9,6 +9,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { HelpArticleBody } from "@/components/help-article-body";
 import { HELP_PAGE_KEYS } from "@/lib/help-page-keys";
 import { uploadHelpImage } from "@/lib/help-image-upload";
+import { AiDraftPanel, type AiDraft } from "./ai-draft-panel";
 import { MediaPicker } from "./media-picker";
 import type { MediaImage } from "./media-shared";
 import { ResizableImage } from "./resizable-image";
@@ -92,6 +93,9 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
   const leaving = useRef(false); // set just before an intentional post-save navigation
   // Live preview (spec 0026 polish): render the body with reader typography before publishing.
   const [preview, setPreview] = useState(false);
+  // AI draft (spec 0027): the generate panel, and a draft held for the overwrite confirm.
+  const [aiOpen, setAiOpen] = useState(false);
+  const [pendingDraft, setPendingDraft] = useState<AiDraft | null>(null);
   // Saving must preserve the article's current status: "Save changes" on a published article
   // keeps it published (Ctrl/⌘-S too), so a plain save never unpublishes. Status only changes
   // via the explicit Publish / Unpublish actions.
@@ -247,6 +251,23 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
     }
   }
 
+  // Apply an AI draft into the editor. Confirm first if it would overwrite existing content.
+  function applyDraft(draft: AiDraft) {
+    setTitle(draft.title);
+    setExcerpt(draft.excerpt);
+    editor?.commands.setContent(draft.bodyHtml || "<p></p>");
+    setBodyDirty(true);
+  }
+  function onAiDraft(draft: AiDraft) {
+    setAiOpen(false);
+    const hasContent =
+      title.trim().length > 0 ||
+      excerpt.trim().length > 0 ||
+      (editor?.getText().trim().length ?? 0) > 0;
+    if (hasContent) setPendingDraft(draft);
+    else applyDraft(draft);
+  }
+
   // The media picker returns a chosen (or freshly uploaded) library image. Insert it into the
   // body with its alt text, or set it as the featured image, depending on which flow is open.
   function onPickImage(img: MediaImage) {
@@ -356,6 +377,15 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => setAiOpen(true)}
+            className="rounded-[--radius-panel] border border-accent-500 bg-surface px-3 py-2 text-sm font-medium text-accent-500 hover:bg-accent-500/5 disabled:opacity-50"
+          >
+            ✨ Generate with AI
+          </button>
+
           {/* Publish toggle: Publish a draft, or Unpublish a published article. Persists the
               current edits as it flips the status. */}
           <button
@@ -665,6 +695,22 @@ export function ArticleEditor({ article }: { article: EditorArticle | null }) {
         busy={busy !== null}
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => void remove()}
+      />
+
+      {aiOpen && (
+        <AiDraftPanel onApply={onAiDraft} onClose={() => setAiOpen(false)} />
+      )}
+
+      <ConfirmDialog
+        open={pendingDraft !== null}
+        title="Replace with the AI draft?"
+        body="This replaces the current title, excerpt, and body with the generated draft. You can still edit before saving."
+        confirmLabel="Replace"
+        onCancel={() => setPendingDraft(null)}
+        onConfirm={() => {
+          if (pendingDraft) applyDraft(pendingDraft);
+          setPendingDraft(null);
+        }}
       />
 
       {pickerFor && (
