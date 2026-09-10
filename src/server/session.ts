@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getAuth } from "./auth";
 import { getDb } from "./db";
-import { member } from "./db/auth-schema";
+import { member, organization } from "./db/auth-schema";
 
 const ABSOLUTE_SESSION_MAX_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (spec 0001 AC-5)
 
@@ -27,6 +27,20 @@ export async function getSession() {
     return null;
   }
   return result;
+}
+
+/**
+ * The display name of an organization by id (identity table, not tenant data), or
+ * null if unknown. Used where an email or message needs the org's human name rather
+ * than its opaque id (e.g. the support-request email).
+ */
+export async function getOrgName(orgId: string): Promise<string | null> {
+  const [org] = await getDb()
+    .select({ name: organization.name })
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+  return org?.name ?? null;
 }
 
 /** Require a signed-in caller; redirect to sign-in otherwise. Returns the session. */

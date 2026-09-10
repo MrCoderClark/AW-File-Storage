@@ -1,6 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { sendEmail, supportRequestEmail } from "@/server/email";
-import { getActor, getSession } from "@/server/session";
+import { getActor, getOrgName, getSession } from "@/server/session";
 
 // Contact-support form submit (spec 0025 follow-up). Any signed-in staff member can send a
 // message to the support inbox; delivery goes through Resend (spec 0001's mailer), with the
@@ -51,6 +51,9 @@ export async function POST(req: Request) {
   const e = env as unknown as Env;
   const to =
     e.SUPPORT_EMAIL ?? e.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@americaworks.com";
+  // Show the org's human name in the email, not its opaque id. Fall back to the id
+  // if the name can't be resolved, so support still sees which org it was.
+  const orgName = (await getOrgName(actor.orgId)) ?? actor.orgId;
 
   try {
     await sendEmail(
@@ -65,7 +68,7 @@ export async function POST(req: Request) {
         html: supportRequestEmail({
           fromName: session.user.name,
           fromEmail: session.user.email,
-          orgId: actor.orgId,
+          orgName,
           subject,
           message,
         }),

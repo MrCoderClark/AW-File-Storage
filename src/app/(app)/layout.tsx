@@ -3,6 +3,7 @@ import { AppDataProvider } from "@/components/app-data";
 import { AppHeader } from "@/components/app-header";
 import { AppNav } from "@/components/app-nav";
 import { AppShellBody } from "@/components/app-shell-body";
+import { ContactSupport } from "@/components/contact-support";
 import { SideRail } from "@/components/side-rail";
 import { getRailData } from "@/server/rail";
 import { twoFactorEnrollmentRequired } from "@/server/session";
@@ -49,7 +50,9 @@ export default async function AppLayout({
           <span>© {new Date().getFullYear()} {appName}. All rights reserved.</span>
           <span className="flex gap-4">
             <a href="#" className="hover:text-slate-700">Privacy</a>
-            <a href="#" className="hover:text-slate-700">Support</a>
+            <ContactSupport className="hover:text-slate-700">
+              Support
+            </ContactSupport>
           </span>
         </footer>
       </div>

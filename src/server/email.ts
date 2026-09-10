@@ -82,7 +82,7 @@ export function linkEmail(
 export function supportRequestEmail(opts: {
   fromName?: string | null;
   fromEmail: string;
-  orgId: string;
+  orgName: string;
   subject: string;
   message: string;
 }): string {
@@ -93,7 +93,7 @@ export function supportRequestEmail(opts: {
   const content = `          <p style="margin:0 0 14px 0;font-weight:700;">New support request</p>
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px 0;font-size:14px;color:${BRAND.muted};">
             <tr><td style="padding:2px 12px 2px 0;">From</td><td style="color:${BRAND.text};">${who}</td></tr>
-            <tr><td style="padding:2px 12px 2px 0;">Organization</td><td style="color:${BRAND.text};">${escapeHtml(opts.orgId)}</td></tr>
+            <tr><td style="padding:2px 12px 2px 0;">Organization</td><td style="color:${BRAND.text};">${escapeHtml(opts.orgName)}</td></tr>
             <tr><td style="padding:2px 12px 2px 0;">Subject</td><td style="color:${BRAND.text};">${escapeHtml(opts.subject)}</td></tr>
           </table>
           <div style="padding:14px 16px;background-color:${BRAND.canvas};border:1px solid ${BRAND.border};border-radius:8px;font-size:15px;line-height:23px;color:${BRAND.text};">${body}</div>
