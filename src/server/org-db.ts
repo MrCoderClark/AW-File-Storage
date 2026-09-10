@@ -191,6 +191,22 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         .orderBy(desc(auditEvents.createdAt))
         .limit(opts.limit ?? 100);
     },
+    /** Count this org's audit events by one actor + action since a time (spec 0027 rate limit).
+     * Reuses the audit trail as a lightweight per-user throttle, no extra table. */
+    async countByActorAction(actorUserId: string, action: string, sinceMs: number) {
+      const [row] = await db
+        .select({ n: count() })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.orgId, orgId),
+            eq(auditEvents.actorUserId, actorUserId),
+            eq(auditEvents.action, action),
+            gte(auditEvents.createdAt, new Date(sinceMs)),
+          ),
+        );
+      return row?.n ?? 0;
+    },
     /**
      * The admin Activity Logs feed (spec 0018): filtered, keyset-paginated, with the
      * actor's name joined. Cursor is [createdAt-ms, id] for a stable desc order.
