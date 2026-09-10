@@ -67,6 +67,10 @@
 		{ "binding": "FILES_PRIVATE", "bucket_name": "aw-files-private" },
 		{ "binding": "FILES_PUBLIC", "bucket_name": "aw-files-public" }
 	],
+	// Cloudflare Workers AI (spec 0027): the AI binding authorizes itself (no API key). Used
+	// server-side for AI-assisted help-article drafting. In local `next dev` under OpenNext the
+	// platform proxy connects this to REAL Workers AI (calls count toward usage).
+	"ai": { "binding": "AI" },
 	// ---------------------------------------------------------------------------
 	// Bindings below are added as each phase needs them. Create the resources in
 	// your Cloudflare account first (see the commands the assistant provides),
