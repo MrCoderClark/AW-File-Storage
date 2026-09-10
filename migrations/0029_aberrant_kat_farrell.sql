@@ -1,0 +1,1 @@
+ALTER TABLE `org_settings` ADD `import_rate_per_hour` integer;

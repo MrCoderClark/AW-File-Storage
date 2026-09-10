@@ -39,5 +39,11 @@ export default {
     ctx.waitUntil(callCron(env, "/api/cron/cleanup"));
     ctx.waitUntil(callCron(env, "/api/cron/o365-sync"));
     ctx.waitUntil(callCron(env, "/api/cron/o365-purge"));
+    // Safety net for the bulk-import drain (spec 0028): imports normally publish on
+    // demand — the submit kicks the drain and it self-chains until done, so nothing
+    // polls while idle. This nightly call only resumes an import whose chain died
+    // mid-run; it is an instant no-op when there is nothing pending. If it drains any
+    // rows it self-chains from there, so one call is enough.
+    ctx.waitUntil(callCron(env, "/api/cron/card-import"));
   },
 };

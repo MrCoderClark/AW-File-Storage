@@ -17,6 +17,7 @@ interface OrgData {
   role: "owner" | "admin" | "member";
   canDelete: boolean;
   canCreate: boolean;
+  importRatePerHour: number | null;
 }
 
 function formatBytes(n: number): string {
@@ -77,6 +78,7 @@ export function OrganizationSection() {
 
       <IdentityPanel org={data.org} role={data.role} onSaved={load} />
       <StoragePanel org={data.org} />
+      <ImportRatePanel initial={data.importRatePerHour} onSaved={load} />
       {data.canCreate && <CreatePanel />}
       {data.canDelete && (
         <DeletePanel name={data.org.name} orgId={data.org.id} router={router} />
@@ -180,6 +182,101 @@ function StoragePanel({ org }: { org: OrgInfo }) {
           style={{ width: `${pct}%` }}
         />
       </div>
+    </div>
+  );
+}
+
+function ImportRatePanel({
+  initial,
+  onSaved,
+}: {
+  initial: number | null;
+  onSaved: () => void;
+}) {
+  // Blank input = no override (the env default applies). A number 1..100 overrides it.
+  const [value, setValue] = useState(initial === null ? "" : String(initial));
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  const trimmed = value.trim();
+  const parsed = trimmed === "" ? null : Number(trimmed);
+  const invalid =
+    trimmed !== "" &&
+    (!Number.isInteger(parsed) || (parsed as number) < 1 || (parsed as number) > 100);
+  const unchanged = (initial === null ? "" : String(initial)) === trimmed;
+
+  async function save() {
+    if (invalid || unchanged || saving) return;
+    setSaving(true);
+    setMsg("");
+    setError("");
+    try {
+      const res = await fetch("/api/organization", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ importRatePerHour: parsed }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      if (!res.ok || !body.ok) throw new Error(body.error ?? String(res.status));
+      setMsg(parsed === null ? "Cleared — using the default." : "Saved.");
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-[--radius-panel] border border-border bg-surface p-5">
+      <label
+        htmlFor="import-rate"
+        className="block text-sm font-medium text-slate-800"
+      >
+        Imports per hour
+      </label>
+      <p className="mt-1 text-sm text-muted-500">
+        How many bulk contact-card imports each member may start per hour. Leave
+        blank to use the default. A busy onboarding day may need a higher number.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input
+          id="import-rate"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={100}
+          value={value}
+          disabled={saving}
+          placeholder="Default"
+          onChange={(e) => setValue(e.target.value)}
+          aria-describedby="import-rate-help"
+          aria-invalid={invalid}
+          className="w-32 rounded-[--radius-panel] border border-border px-3 py-2 text-sm disabled:bg-canvas"
+        />
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={saving || invalid || unchanged}
+          className="rounded-[--radius-panel] bg-brand-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+      <p id="import-rate-help" className="mt-2 text-xs text-muted-500">
+        A whole number from 1 to 100.
+      </p>
+      {invalid && (
+        <p className="mt-1 text-xs text-danger-600">
+          Enter a whole number from 1 to 100, or leave blank for the default.
+        </p>
+      )}
+      {error && <p className="mt-1 text-xs text-danger-600">{error}</p>}
+      {msg && !error && <p className="mt-1 text-xs text-muted-500">{msg}</p>}
     </div>
   );
 }

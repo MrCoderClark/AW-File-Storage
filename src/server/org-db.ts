@@ -16,6 +16,8 @@ import {
 import { buildDb, getDb, type Db } from "./db";
 import {
   auditEvents,
+  cardImportRows,
+  cardImports,
   cardStatDaily,
   files,
   fileVersions,
@@ -60,6 +62,8 @@ type NewUploadSession = Omit<typeof uploadSessions.$inferInsert, "orgId">;
 type NewAuditEvent = Omit<typeof auditEvents.$inferInsert, "orgId">;
 type NewHelpArticle = Omit<typeof helpArticles.$inferInsert, "orgId">;
 type NewHelpImage = Omit<typeof helpImages.$inferInsert, "orgId">;
+type NewCardImport = Omit<typeof cardImports.$inferInsert, "orgId">;
+type NewCardImportRow = Omit<typeof cardImportRows.$inferInsert, "orgId">;
 
 /** Strip HTML to plain, whitespace-collapsed text for the reader search index (spec 0026). */
 function htmlToSearchText(html: string | null | undefined): string {
@@ -116,6 +120,17 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         .where(and(eq(files.orgId, orgId), eq(files.id, id)))
         .returning();
       return rows[0];
+    },
+    /**
+     * Hard delete: permanently remove the row. Used by the Delete action, which is now
+     * permanent; Unpublish is the reversible path. FKs handle the rest — `card_stat_daily`
+     * / `file_version` rows cascade away, and a `card_import_row` that published this card
+     * has its `file_id` set null. The audit trail survives (audit_event has no FK to file).
+     */
+    async remove(id: string) {
+      await db
+        .delete(files)
+        .where(and(eq(files.orgId, orgId), eq(files.id, id)));
     },
     /** Soft delete: the row stays, leaves every listing, keeps who/when (AC-7 of 0002). */
     async softDelete(id: string, deletedBy: string) {
@@ -206,6 +221,27 @@ export function orgDb(orgId: string, db: Db = getDb()) {
           ),
         );
       return row?.n ?? 0;
+    },
+    /**
+     * The `created_at` of this org's most recent event with the given action against a
+     * target, or null if there is none (spec 0029). Backs the per-user import-rate
+     * reset: the latest `import.rate_reset` for a user is that user's counting-window
+     * high-water mark. Reuses the audit trail as the reset marker, no extra table.
+     */
+    async latestActionAt(action: string, targetId: string): Promise<Date | null> {
+      const [row] = await db
+        .select({ at: auditEvents.createdAt })
+        .from(auditEvents)
+        .where(
+          and(
+            eq(auditEvents.orgId, orgId),
+            eq(auditEvents.action, action),
+            eq(auditEvents.targetId, targetId),
+          ),
+        )
+        .orderBy(desc(auditEvents.createdAt))
+        .limit(1);
+      return row?.at ?? null;
     },
     /**
      * The admin Activity Logs feed (spec 0018): filtered, keyset-paginated, with the
@@ -375,6 +411,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
       o365AutoCardEnabled: boolean;
       o365AutoCardSince: Date | null;
       o365RemoveOnOffboardEnabled: boolean;
+      importRatePerHour: number | null;
     }> {
       const rows = await db
         .select({
@@ -382,6 +419,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
           o365AutoCardEnabled: orgSettings.o365AutoCardEnabled,
           o365AutoCardSince: orgSettings.o365AutoCardSince,
           o365RemoveOnOffboardEnabled: orgSettings.o365RemoveOnOffboardEnabled,
+          importRatePerHour: orgSettings.importRatePerHour,
         })
         .from(orgSettings)
         .where(eq(orgSettings.orgId, orgId))
@@ -392,7 +430,24 @@ export function orgDb(orgId: string, db: Db = getDb()) {
         o365AutoCardSince: rows[0]?.o365AutoCardSince ?? null,
         o365RemoveOnOffboardEnabled:
           rows[0]?.o365RemoveOnOffboardEnabled ?? false,
+        importRatePerHour: rows[0]?.importRatePerHour ?? null,
       };
+    },
+    /**
+     * Set (or clear, with null) the per-org bulk-import rate limit (spec 0029). The
+     * caller has already validated a non-null value is an integer in 1..100 (AC-7);
+     * null clears the override so the env default applies again. Upserts the single
+     * org row, org-scoped like every setter here.
+     */
+    async setImportRatePerHour(value: number | null) {
+      const now = new Date();
+      await db
+        .insert(orgSettings)
+        .values({ orgId, importRatePerHour: value, updatedAt: now })
+        .onConflictDoUpdate({
+          target: orgSettings.orgId,
+          set: { importRatePerHour: value, updatedAt: now },
+        });
     },
     async setO365SyncEnabled(value: boolean) {
       await db
@@ -1011,6 +1066,159 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     },
   };
 
+  // Bulk contact-card import (spec 0028). Org-scoped like every other helper: an
+  // import and its rows are read/written only within this org. The cross-org drain
+  // scan (finding pending rows across every org) is the ONE read that cannot be
+  // org-scoped and lives in card-import.ts on the raw client, exactly like the O365
+  // provision / cleanup system jobs; every WRITE it makes still comes back through
+  // this wrapper with the row's own orgId.
+  const cardImports_ = {
+    /** Create the import run record (the client-supplied id is the idempotency key). */
+    async create(data: NewCardImport) {
+      const rows = await db
+        .insert(cardImports)
+        .values({ ...data, orgId })
+        .returning();
+      return rows[0];
+    },
+    /** An import by id, only if it belongs to this org (else undefined -> 404). */
+    async get(id: string) {
+      const rows = await db
+        .select()
+        .from(cardImports)
+        .where(and(eq(cardImports.orgId, orgId), eq(cardImports.id, id)))
+        .limit(1);
+      return rows[0];
+    },
+    async updateImport(id: string, patch: Partial<NewCardImport>) {
+      const rows = await db
+        .update(cardImports)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(cardImports.orgId, orgId), eq(cardImports.id, id)))
+        .returning();
+      return rows[0];
+    },
+    /** Count this org's accepted imports by one actor since a time (the AC-9 rate limit). */
+    async countRecentByActor(actorUserId: string, sinceMs: number) {
+      const [row] = await db
+        .select({ n: count() })
+        .from(cardImports)
+        .where(
+          and(
+            eq(cardImports.orgId, orgId),
+            eq(cardImports.actorUserId, actorUserId),
+            gte(cardImports.createdAt, new Date(sinceMs)),
+          ),
+        );
+      return row?.n ?? 0;
+    },
+    /** Insert this import's rows (org injected). Split into chunks D1 can bind. */
+    async createRows(rows: NewCardImportRow[]) {
+      if (rows.length === 0) return;
+      const CHUNK = 50; // stay well under D1's bound-variable limit
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        await db
+          .insert(cardImportRows)
+          .values(rows.slice(i, i + CHUNK).map((r) => ({ ...r, orgId })));
+      }
+    },
+    /** This import's rows for the results view, in source order, each with its card's
+     * public slug (when published) so the route can build the public URL. */
+    async listRows(importId: string) {
+      return db
+        .select({
+          rowNumber: cardImportRows.rowNumber,
+          contactName: cardImportRows.contactName,
+          outcome: cardImportRows.outcome,
+          reason: cardImportRows.reason,
+          fileId: cardImportRows.fileId,
+          publicSlug: files.publicSlug,
+        })
+        .from(cardImportRows)
+        .leftJoin(files, eq(files.id, cardImportRows.fileId))
+        .where(
+          and(
+            eq(cardImportRows.orgId, orgId),
+            eq(cardImportRows.importId, importId),
+          ),
+        )
+        .orderBy(cardImportRows.rowNumber);
+    },
+    /** Per-outcome tally for one import (drives the counts + settle status). */
+    async outcomeCounts(importId: string) {
+      const rows = await db
+        .select({ outcome: cardImportRows.outcome, n: count() })
+        .from(cardImportRows)
+        .where(
+          and(
+            eq(cardImportRows.orgId, orgId),
+            eq(cardImportRows.importId, importId),
+          ),
+        )
+        .groupBy(cardImportRows.outcome);
+      const tally = {
+        pending: 0,
+        processing: 0,
+        published: 0,
+        skipped: 0,
+        failed: 0,
+      };
+      for (const r of rows) tally[r.outcome] = Number(r.n);
+      return tally;
+    },
+    /**
+     * Atomically claim one row for a drain (pending -> processing), or reclaim a stale
+     * `processing` row (claimed before `staleBefore`). Bumps `attempts` and stamps
+     * `claimed_at`. Returns the claimed row (with its new attempt count and payload) or
+     * undefined when another drain already took it (AC-13).
+     */
+    async claimRow(rowId: string, staleBefore: Date) {
+      const rows = await db
+        .update(cardImportRows)
+        .set({
+          outcome: "processing",
+          claimedAt: new Date(),
+          attempts: sql`${cardImportRows.attempts} + 1`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(cardImportRows.orgId, orgId),
+            eq(cardImportRows.id, rowId),
+            or(
+              eq(cardImportRows.outcome, "pending"),
+              and(
+                eq(cardImportRows.outcome, "processing"),
+                or(
+                  isNull(cardImportRows.claimedAt),
+                  lt(cardImportRows.claimedAt, staleBefore),
+                ),
+              ),
+            ),
+          ),
+        )
+        .returning();
+      return rows[0];
+    },
+    /** Set a row's terminal (or reverted) outcome (org-scoped). */
+    async setRowOutcome(
+      rowId: string,
+      patch: {
+        outcome: "pending" | "published" | "skipped" | "failed";
+        reason?: string | null;
+        fileId?: string | null;
+        claimedAt?: Date | null;
+      },
+    ) {
+      await db
+        .update(cardImportRows)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(
+          and(eq(cardImportRows.orgId, orgId), eq(cardImportRows.id, rowId)),
+        );
+    },
+  };
+
   return {
     orgId,
     files: files_,
@@ -1022,6 +1230,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     cardStats,
     graphCreds,
     help,
+    cardImports: cardImports_,
   };
 }
 
