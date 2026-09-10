@@ -929,9 +929,17 @@ export async function unpublishVcard(
 }
 
 /**
- * Soft-delete a file (spec 0002 AC-7). If it was published, the public object is
- * removed immediately so the address stops resolving; the private object is
- * reclaimed by the scheduled sweep. Usage is decremented.
+ * Permanently delete a file (hard delete). Delete is the PERMANENT action; Unpublish
+ * (`unpublishVcard`) is the reversible one. Both R2 objects are removed — the public
+ * one (if published) so the address stops resolving, AND the durable private copy — and
+ * the DB row itself is deleted, so its content checksum and public slug are freed and a
+ * re-import of the same contact publishes cleanly rather than skipping as a duplicate.
+ * The audit trail survives (audit_event has no FK to file); usage is decremented.
+ *
+ * (This supersedes the earlier soft-delete behaviour of spec 0002 AC-7 by owner request:
+ * a deleted card is now gone, not tombstoned. `card_stat_daily` / `file_version` rows
+ * cascade away; a `card_import_row` that published this card keeps its report but its
+ * `file_id` becomes null.)
  */
 export async function deleteFile(
   env: UploadEnv,
@@ -947,9 +955,13 @@ export async function deleteFile(
   assertCanManage(ctx, file);
 
   if (file.visibility === "public" && file.publicSlug) {
-    await r2Delete(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(file.publicSlug));
+    await r2Delete(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(file.publicSlug)).catch(
+      () => {},
+    );
   }
-  await scoped.files.softDelete(fileId, ctx.userId);
+  // Remove the durable private copy too (previously left for the nightly sweep).
+  await r2Delete(cfg, env.R2_PRIVATE_BUCKET, file.storageKey).catch(() => {});
+  await scoped.files.remove(fileId);
   if (file.sizeBytes > 0) {
     await db
       .update(schema.organization)
@@ -963,7 +975,7 @@ export async function deleteFile(
     action: "file.deleted",
     targetType: "file",
     targetId: fileId,
-    metadataJson: JSON.stringify({ name: file.originalName }),
+    metadataJson: JSON.stringify({ name: file.originalName, permanent: true }),
   });
 }
 
@@ -1066,10 +1078,24 @@ async function publishVcard(
   };
 }
 
-export interface AutoPublishResult {
-  created: boolean; // false = an identical live card already existed (no-op)
-  fileId: string;
-  publicUrl?: string;
+export type AutoPublishResult =
+  // A new card was published.
+  | { created: true; fileId: string; publicUrl?: string; duplicate?: undefined }
+  // Nothing was published because an existing card matched (spec 0028 AC-7):
+  //  - "identical": an identical live card already exists in the org (same content).
+  //  - "same_org_slug": the same person already has a card in the org (same name slug).
+  // `fileId` is the matched card, absent only when a race was lost on the slug index.
+  | {
+      created: false;
+      fileId?: string;
+      publicUrl?: undefined;
+      duplicate: "identical" | "same_org_slug";
+    };
+
+/** True for a D1/SQLite UNIQUE-constraint error, however the driver word it. */
+function isUniqueViolation(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /unique constraint failed/i.test(msg);
 }
 
 /**
@@ -1084,7 +1110,17 @@ export async function publishVcardFromBytes(
   env: UploadEnv,
   orgId: string,
   vcf: string,
-  opts: { uploadedBy: string; source: string; o365UserId?: string | null },
+  opts: {
+    uploadedBy: string;
+    source: string;
+    o365UserId?: string | null;
+    // Bulk import (spec 0028 AC-7): dedupe within the org by the name-derived slug —
+    // if the same person already has a live card here, skip instead of publishing a
+    // second suffixed copy. Sets `slug_base` so the (org_id, slug_base) unique index
+    // makes two concurrent drains for the same person safe. Off for every other path
+    // (O365 auto-provision, etc.), whose behaviour is unchanged.
+    skipSameOrgSlugDuplicate?: boolean;
+  },
 ): Promise<AutoPublishResult> {
   const cfg = r2Config(env);
   const db = buildDb(env.DB);
@@ -1109,10 +1145,44 @@ export async function publishVcardFromBytes(
       ),
     )
     .limit(1);
-  if (dup.length > 0) return { created: false, fileId: dup[0].id };
+  if (dup.length > 0) {
+    return { created: false, fileId: dup[0].id, duplicate: "identical" };
+  }
+
+  const slugBase = deriveSlug(result.formattedName);
+
+  // Same-org duplicate (spec 0028 AC-7): the same person already has a live card in
+  // this org — skip instead of publishing a second, suffixed copy. The
+  // (org_id, slug_base) partial unique index is the real guarantee against a race
+  // (two concurrent drains for the same person); this read is the fast, friendly path,
+  // and also catches an existing card published before this feature (slug_base null,
+  // matched on its public_slug).
+  if (opts.skipSameOrgSlugDuplicate) {
+    const existing = await db
+      .select({ id: schema.files.id })
+      .from(schema.files)
+      .where(
+        and(
+          eq(schema.files.orgId, orgId),
+          isNull(schema.files.deletedAt),
+          or(
+            eq(schema.files.slugBase, slugBase),
+            eq(schema.files.publicSlug, slugBase),
+          ),
+        ),
+      )
+      .limit(1);
+    if (existing.length > 0) {
+      return {
+        created: false,
+        fileId: existing[0].id,
+        duplicate: "same_org_slug",
+      };
+    }
+  }
 
   const fileId = uuidv7();
-  const slug = await uniqueSlug(db, deriveSlug(result.formattedName));
+  const slug = await uniqueSlug(db, slugBase);
   const privateKey = `files/${orgId}/${fileId}/${slug}.vcf`;
 
   await r2Put(cfg, env.R2_PRIVATE_BUCKET, privateKey, result.normalized);
@@ -1123,30 +1193,47 @@ export async function publishVcardFromBytes(
   });
 
   const parsed = parseVcard(result.normalized);
-  await scoped.files.create({
-    id: fileId,
-    uploadedBy: opts.uploadedBy,
-    originalName: `${slug}.vcf`,
-    contentType: "text/vcard; charset=utf-8",
-    sizeBytes: normalizedSize,
-    checksumSha256: checksum,
-    storageKey: privateKey,
-    bucket: "private",
-    visibility: "public",
-    kind: "vcard",
-    status: "ready",
-    publicSlug: slug,
-    publishedAt: new Date(),
-    contactName: parsed.fullName || null,
-    contactOrg: parsed.organization || null,
-    contactTitle: parsed.title || null,
-    contactEmail: parsed.email || null,
-    contactLocation:
-      buildLocationText(parsed.address.city, parsed.address.state) || null,
-    category: "vcard",
-    source: opts.source,
-    o365UserId: opts.o365UserId ?? null,
-  });
+  try {
+    await scoped.files.create({
+      id: fileId,
+      uploadedBy: opts.uploadedBy,
+      originalName: `${slug}.vcf`,
+      contentType: "text/vcard; charset=utf-8",
+      sizeBytes: normalizedSize,
+      checksumSha256: checksum,
+      storageKey: privateKey,
+      bucket: "private",
+      visibility: "public",
+      kind: "vcard",
+      status: "ready",
+      publicSlug: slug,
+      // Only the import path stamps slug_base, so only it is constrained by the
+      // (org_id, slug_base) unique index (every other path stays unchanged).
+      slugBase: opts.skipSameOrgSlugDuplicate ? slugBase : null,
+      publishedAt: new Date(),
+      contactName: parsed.fullName || null,
+      contactOrg: parsed.organization || null,
+      contactTitle: parsed.title || null,
+      contactEmail: parsed.email || null,
+      contactLocation:
+        buildLocationText(parsed.address.city, parsed.address.state) || null,
+      category: "vcard",
+      source: opts.source,
+      o365UserId: opts.o365UserId ?? null,
+    });
+  } catch (e) {
+    // Lost the race on (org_id, slug_base): another drain published this same person
+    // between our check and this insert. Undo the objects we just wrote and report a
+    // same-org duplicate — never a hard error, and never a second card (AC-7).
+    if (opts.skipSameOrgSlugDuplicate && isUniqueViolation(e)) {
+      await r2Delete(cfg, env.R2_PUBLIC_BUCKET, publicKeyFor(slug)).catch(
+        () => {},
+      );
+      await r2Delete(cfg, env.R2_PRIVATE_BUCKET, privateKey).catch(() => {});
+      return { created: false, duplicate: "same_org_slug" };
+    }
+    throw e;
+  }
   await addUsage(db, orgId, normalizedSize);
   await scoped.audit.append({
     actorUserId: null,
