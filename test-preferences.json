@@ -1,0 +1,9 @@
+{
+  "tool": "vitest",
+  "additionalTools": [],
+  "e2eTool": null,
+  "testDir": "test",
+  "filePattern": "*.test.ts",
+  "packageManager": "npm",
+  "notes": "Vitest on the Cloudflare workers pool (@cloudflare/vitest-pool-workers); tests apply the real migrations/ against a miniflare D1. The project tests LOGIC + org-scoped DB behavior only; UI, route handlers, and pages are proven at runtime with /check verify in-browser, not with component/E2E tests."
+}

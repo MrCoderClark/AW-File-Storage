@@ -49,7 +49,7 @@ export default async function AppLayout({
         <footer className="flex items-center justify-between border-t border-border bg-surface px-6 py-3 text-xs text-muted-500 print:hidden">
           <span>© {new Date().getFullYear()} {appName}. All rights reserved.</span>
           <span className="flex gap-4">
-            <a href="#" className="hover:text-slate-700">Privacy</a>
+            <a href="/privacy" className="hover:text-slate-700">Privacy</a>
             <ContactSupport className="hover:text-slate-700">
               Support
             </ContactSupport>

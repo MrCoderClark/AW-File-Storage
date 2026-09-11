@@ -29,3 +29,5 @@ NEXT_PUBLIC_APP_NAME="AW File Storage"
 
 # --- Phase 3c, scheduled cleanup (spec 0003) ---
 # CRON_SECRET=""               # shared secret; the companion cron worker sends it as a bearer token
+
+IP_HASH_SALT="" # openssl rand -base64 32

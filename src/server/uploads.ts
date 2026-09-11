@@ -49,6 +49,9 @@ export interface UploadEnv {
   R2_PRIVATE_BUCKET: string;
   R2_PUBLIC_BUCKET: string;
   PUBLIC_FILE_DOMAIN?: string;
+  // Server secret salting the per-visitor grouping hash (spec 0030). Optional so
+  // the type stays usable in tests and where visits are not recorded.
+  IP_HASH_SALT?: string;
 }
 
 async function sha256Hex(text: string): Promise<string> {
