@@ -39,6 +39,9 @@ export default {
     ctx.waitUntil(callCron(env, "/api/cron/cleanup"));
     ctx.waitUntil(callCron(env, "/api/cron/o365-sync"));
     ctx.waitUntil(callCron(env, "/api/cron/o365-purge"));
+    // Purge per-visitor engagement events past the 12-month retention window
+    // (spec 0030); a no-op when nothing is due. The daily rollup is never purged.
+    ctx.waitUntil(callCron(env, "/api/cron/analytics-purge"));
     // Safety net for the bulk-import drain (spec 0028): imports normally publish on
     // demand — the submit kicks the drain and it self-chains until done, so nothing
     // polls while idle. This nightly call only resumes an import whose chain died

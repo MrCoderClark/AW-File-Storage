@@ -211,6 +211,13 @@
       "when": 1789069164384,
       "tag": "0029_aberrant_kat_farrell",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1789136343269,
+      "tag": "0030_curly_moon_knight",
+      "breakpoints": true
     }
   ]
 }

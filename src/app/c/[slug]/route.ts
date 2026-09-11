@@ -14,6 +14,7 @@ import { resolveCardBySlug } from "@/server/signature";
 import { getStateLogoUrl, resolveSocials } from "@/server/social-links";
 import { publicKeyFor, type UploadEnv } from "@/server/uploads";
 import { parseVcard } from "@/server/vcard";
+import { type CfGeo, recordCardVisit } from "@/server/visits";
 
 // Serving for a published contact card, split by request host (spec 0009).
 // ONE GET handler for three shapes under /c/:
@@ -115,7 +116,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug: rawSlug } = await params;
-  const { env: rawEnv, ctx } = getCloudflareContext();
+  const { env: rawEnv, ctx, cf } = getCloudflareContext();
   const env = rawEnv as unknown as UploadEnv;
 
   const url = new URL(req.url);
@@ -174,12 +175,35 @@ export async function GET(
 
   const userAgent = req.headers.get("user-agent");
   const countable = isCountableUserAgent(userAgent);
+  // Visitor request metadata, captured once and reused for whichever metric this
+  // request records. The external IP + country come from the always-present
+  // Cloudflare headers; the richer geo/network from the request `cf` object.
+  const clientIp = req.headers.get("cf-connecting-ip");
+  const countryHeader = req.headers.get("cf-ipcountry");
+  const referrer = req.headers.get("referer");
+  const srcParam = url.searchParams.get("src");
   // Count only real, public-host traffic. App-host hits are logged-in staff
-  // previews (already gated above) and never count (spec 0009).
+  // previews (already gated above) and never count (spec 0009). The per-visitor
+  // event (spec 0030) is recorded on the SAME gate and the SAME best-effort
+  // waitUntil, so events and counts always agree (AC-2, AC-4) and neither can
+  // block or fail the response (AC-3).
   const count = (metric: CardMetric) => {
     if (!isPublicHost || !countable) return;
     ctx.waitUntil(
       recordCardHit(env, { fileId: ref.fileId, orgId: ref.orgId, metric }),
+    );
+    ctx.waitUntil(
+      recordCardVisit(env, {
+        fileId: ref.fileId,
+        orgId: ref.orgId,
+        metric,
+        ip: clientIp,
+        userAgent,
+        referrer,
+        src: srcParam,
+        cf: cf as unknown as CfGeo | undefined,
+        countryHeader,
+      }),
     );
   };
 

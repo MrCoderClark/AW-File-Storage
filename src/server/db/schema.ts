@@ -4,6 +4,7 @@ import {
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -275,6 +276,83 @@ export const cardStatDaily = sqliteTable(
     index("card_stat_daily_org_file_idx").on(t.orgId, t.fileId),
     check(
       "card_stat_daily_metric_ck",
+      sql`${t.metric} in ('view','scan','download','pdf')`,
+    ),
+  ],
+);
+
+// Per-visitor engagement events for cards (spec 0030). An append-only detail
+// layer BESIDE the daily rollup above: one row per counted public hit, capturing
+// who engaged (external IP + Cloudflare geo/network), on what device (raw
+// User-Agent; device/OS/browser are DERIVED at read time, never stored, so an
+// improved parser applies to old rows), from where (referrer), and how (metric +
+// src). Written best-effort on the same `waitUntil` as the rollup, only for a
+// countable User-Agent on the public host, so events and counts stay in lockstep.
+//
+// `org_id` scopes every read and cascades on org delete; the `file` FK cascades so
+// a hard-deleted card takes its visit rows with it. Raw rows are personal data,
+// so they are owner/admin-only to read and are purged after 12 months by the
+// nightly cron (the rollup above is never purged). There is NO composite key —
+// every hit is a distinct event (contrast the rollup's UPSERT). Additive table
+// only; no existing table is touched, so this migration cannot cascade-wipe
+// (gotcha #9).
+export const cardVisitEvent = sqliteTable(
+  "card_visit_event",
+  {
+    // uuidv7: time-sortable, so it doubles as the keyset tiebreaker with created_at.
+    id: id(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => files.id, { onDelete: "cascade" }),
+    // Mirrors card_stat_daily.metric so the event log and the aggregate agree.
+    metric: text("metric", { enum: ["view", "scan", "download", "pdf"] }).notNull(),
+    createdAt: createdAt(),
+    // Full external IP (CF-Connecting-IP). A private/NAT IP is never available.
+    ip: text("ip"),
+    // Salted hash of ip + user-agent + UTC day (server secret IP_HASH_SALT): a
+    // grouping key for the approximate unique-visitor count, not a confidentiality
+    // measure (an admin sees the raw ip on the same row). The salt keeps it from
+    // being rehashable against guessed IPs if `ip` is ever redacted later.
+    visitorHash: text("visitor_hash"),
+    // Cloudflare geo/network (cf.* under OpenNext), with the CF-IPCountry header as
+    // the country fallback. Null when the field is unavailable.
+    country: text("country"),
+    region: text("region"),
+    city: text("city"),
+    postal: text("postal"),
+    latitude: real("latitude"),
+    longitude: real("longitude"),
+    timezone: text("timezone"),
+    asn: integer("asn"),
+    asOrg: text("as_org"),
+    // Raw User-Agent; device/OS/browser are derived from this at read time.
+    userAgent: text("user_agent"),
+    referrer: text("referrer"),
+    // Landing source, e.g. "qr" for a QR scan.
+    src: text("src"),
+  },
+  (t) => [
+    // Every index leads with org_id (platform rule). Newest-first org feed:
+    index("card_visit_event_org_created_idx").on(t.orgId, t.createdAt),
+    // Per-card filter:
+    index("card_visit_event_org_file_created_idx").on(
+      t.orgId,
+      t.fileId,
+      t.createdAt,
+    ),
+    // Metric-only filter:
+    index("card_visit_event_org_metric_created_idx").on(
+      t.orgId,
+      t.metric,
+      t.createdAt,
+    ),
+    // Unique-visitor tallies (COUNT DISTINCT visitor_hash):
+    index("card_visit_event_org_visitor_idx").on(t.orgId, t.visitorHash),
+    check(
+      "card_visit_event_metric_ck",
       sql`${t.metric} in ('view','scan','download','pdf')`,
     ),
   ],

@@ -6,6 +6,7 @@ import {
   getTableColumns,
   gte,
   inArray,
+  isNotNull,
   isNull,
   like,
   lt,
@@ -19,6 +20,7 @@ import {
   cardImportRows,
   cardImports,
   cardStatDaily,
+  cardVisitEvent,
   files,
   fileVersions,
   helpArticles,
@@ -64,6 +66,9 @@ type NewHelpArticle = Omit<typeof helpArticles.$inferInsert, "orgId">;
 type NewHelpImage = Omit<typeof helpImages.$inferInsert, "orgId">;
 type NewCardImport = Omit<typeof cardImports.$inferInsert, "orgId">;
 type NewCardImportRow = Omit<typeof cardImportRows.$inferInsert, "orgId">;
+// A visit event with org_id removed (the wrapper injects it) and the auto-set
+// id/created_at optional, so the capture path passes only the captured fields.
+type NewVisitEvent = Omit<typeof cardVisitEvent.$inferInsert, "orgId">;
 
 /** Strip HTML to plain, whitespace-collapsed text for the reader search index (spec 0026). */
 function htmlToSearchText(html: string | null | undefined): string {
@@ -669,6 +674,134 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     },
   };
 
+  // Per-visitor engagement events (spec 0030). An append-only detail log beside
+  // the cardStats rollup: `record` writes one row per counted public hit; the two
+  // reads back the owner/admin Analytics feed. Every method is constrained to this
+  // org (the feed joins `file` inside the org too), so one org can never read or
+  // record another's visitor events (AC-8). The cross-org retention purge is the
+  // one system-wide operation and lives in visits.ts on the raw client, never here.
+  const visits = {
+    /** Append one visit event (org injected). Fired best-effort from the public route. */
+    async record(data: NewVisitEvent) {
+      await db.insert(cardVisitEvent).values({ ...data, orgId });
+    },
+    /**
+     * The owner/admin visitor feed (AC-6): newest first, keyset-paginated, filtered
+     * by card and/or metric and a time range, with the card's name/slug joined.
+     * Cursor is [createdAt-ms, id] for a stable desc order (matching the audit feed).
+     */
+    async listPage(opts: {
+      fileId?: string;
+      metric?: CardMetric;
+      sinceMs?: number;
+      cursor?: { at: number; id: string } | null;
+      limit?: number;
+    }) {
+      const limit = Math.min(opts.limit ?? 40, 100);
+      const conds: SQL[] = [eq(cardVisitEvent.orgId, orgId)];
+      if (opts.fileId) conds.push(eq(cardVisitEvent.fileId, opts.fileId));
+      if (opts.metric) conds.push(eq(cardVisitEvent.metric, opts.metric));
+      if (opts.sinceMs) {
+        conds.push(gte(cardVisitEvent.createdAt, new Date(opts.sinceMs)));
+      }
+      if (opts.cursor) {
+        const at = new Date(opts.cursor.at);
+        const c = or(
+          lt(cardVisitEvent.createdAt, at),
+          and(
+            eq(cardVisitEvent.createdAt, at),
+            lt(cardVisitEvent.id, opts.cursor.id),
+          ),
+        );
+        if (c) conds.push(c);
+      }
+      const rows = await db
+        .select({
+          id: cardVisitEvent.id,
+          fileId: cardVisitEvent.fileId,
+          metric: cardVisitEvent.metric,
+          createdAt: cardVisitEvent.createdAt,
+          ip: cardVisitEvent.ip,
+          country: cardVisitEvent.country,
+          region: cardVisitEvent.region,
+          city: cardVisitEvent.city,
+          postal: cardVisitEvent.postal,
+          timezone: cardVisitEvent.timezone,
+          asn: cardVisitEvent.asn,
+          asOrg: cardVisitEvent.asOrg,
+          userAgent: cardVisitEvent.userAgent,
+          referrer: cardVisitEvent.referrer,
+          src: cardVisitEvent.src,
+          cardName: files.contactName,
+          cardOriginalName: files.originalName,
+          slug: files.publicSlug,
+        })
+        .from(cardVisitEvent)
+        .leftJoin(files, eq(files.id, cardVisitEvent.fileId))
+        .where(and(...conds))
+        .orderBy(desc(cardVisitEvent.createdAt), desc(cardVisitEvent.id))
+        .limit(limit + 1);
+      const hasMore = rows.length > limit;
+      const items = rows.slice(0, limit);
+      const last = items[items.length - 1];
+      return {
+        items,
+        nextCursor:
+          hasMore && last ? { at: last.createdAt.getTime(), id: last.id } : null,
+      };
+    },
+    /**
+     * Approximate unique visitors for the current filter (AC-5): distinct
+     * `visitor_hash` over the same card/metric/range scope. A null hash (no IP)
+     * is excluded, so it never collapses distinct IP-less hits into one "visitor".
+     */
+    async uniqueCount(opts: {
+      fileId?: string;
+      metric?: CardMetric;
+      sinceMs?: number;
+    }): Promise<number> {
+      const conds: SQL[] = [
+        eq(cardVisitEvent.orgId, orgId),
+        isNotNull(cardVisitEvent.visitorHash),
+      ];
+      if (opts.fileId) conds.push(eq(cardVisitEvent.fileId, opts.fileId));
+      if (opts.metric) conds.push(eq(cardVisitEvent.metric, opts.metric));
+      if (opts.sinceMs) {
+        conds.push(gte(cardVisitEvent.createdAt, new Date(opts.sinceMs)));
+      }
+      const [row] = await db
+        .select({
+          n: sql<number>`count(distinct ${cardVisitEvent.visitorHash})`,
+        })
+        .from(cardVisitEvent)
+        .where(and(...conds));
+      return Number(row?.n ?? 0);
+    },
+    /**
+     * The distinct cards that have at least one visit event, for the feed's
+     * "filter by card" dropdown (AC-6). Org-scoped; name/slug joined from `file`.
+     */
+    async filterCards() {
+      const rows = await db
+        .selectDistinct({
+          fileId: cardVisitEvent.fileId,
+          name: files.contactName,
+          originalName: files.originalName,
+          slug: files.publicSlug,
+        })
+        .from(cardVisitEvent)
+        .leftJoin(files, eq(files.id, cardVisitEvent.fileId))
+        .where(eq(cardVisitEvent.orgId, orgId));
+      return rows
+        .map((r) => ({
+          fileId: r.fileId,
+          name: r.name || r.originalName || "—",
+          slug: r.slug,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    },
+  };
+
   // Per-org Office 365 credentials (spec 0013). Stores/returns the ENCRYPTED row
   // as-is — encryption/decryption happens in the O365 layer, so the KEK never
   // reaches this wrapper. Org-scoped like every other helper: one org can't read
@@ -1228,6 +1361,7 @@ export function orgDb(orgId: string, db: Db = getDb()) {
     settings,
     socialLinks,
     cardStats,
+    visits,
     graphCreds,
     help,
     cardImports: cardImports_,
